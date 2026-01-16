@@ -5,6 +5,7 @@ from bson import ObjectId
 from datetime import datetime
 import uuid
 import json
+import re
 
 from app.database import database
 from app.config import settings
@@ -13,6 +14,92 @@ from app.services.rag_engine import get_rag_engine
 from app.services.memory_system import get_memory_system
 from app.services.resource_monitor import get_resource_monitor
 from app.services.tool_executor import ToolExecutor
+
+
+def should_search_documents(message: str) -> bool:
+    """Determine if the message warrants a document search.
+    
+    Returns True for questions, requests for information, or specific topics.
+    Returns False for greetings, personal statements, or casual chat.
+    """
+    message_lower = message.lower().strip()
+    
+    # Skip search for very short messages (likely greetings)
+    if len(message_lower) < 15:
+        return False
+    
+    # Skip search for common greetings and personal statements
+    skip_patterns = [
+        r'^(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening))[\s,!.]*',
+        r'^(my name is|i\'m |i am |call me )',
+        r'^(thanks|thank you|thx)',
+        r'^(bye|goodbye|see you|later)',
+        r'^(how are you|what\'s up|sup)',
+        r'^(yes|no|ok|okay|sure|alright|got it|understood)[\s!.]*$',
+    ]
+    
+    for pattern in skip_patterns:
+        if re.match(pattern, message_lower):
+            return False
+    
+    # Search for questions or information requests
+    search_indicators = [
+        r'\?$',  # Ends with question mark
+        r'^(what|who|where|when|why|how|which|can you|could you|do you|does|did|is|are|was|were)',
+        r'(tell me|explain|describe|show me|find|search|look up|look for)',
+        r'(information|details|about|regarding|concerning)',
+        r'(document|file|report|article|paper)',
+    ]
+    
+    for pattern in search_indicators:
+        if re.search(pattern, message_lower):
+            return True
+    
+    # Default: search if message is substantial (likely a real question)
+    word_count = len(message_lower.split())
+    return word_count >= 5
+
+
+def should_search_memories(message: str) -> bool:
+    """Determine if the message warrants a memory search.
+    
+    Returns True for questions about the user, references to past conversations,
+    or topics that might benefit from personal context.
+    """
+    message_lower = message.lower().strip()
+    
+    # Skip for very short messages
+    if len(message_lower) < 10:
+        return False
+    
+    # Skip common greetings (but NOT personal introductions - we want to check memories for those)
+    skip_patterns = [
+        r'^(hi|hello|hey|howdy|greetings)[\s,!.]*$',
+        r'^(thanks|thank you|thx)',
+        r'^(bye|goodbye|see you)',
+        r'^(yes|no|ok|okay|sure|alright)[\s!.]*$',
+    ]
+    
+    for pattern in skip_patterns:
+        if re.match(pattern, message_lower):
+            return False
+    
+    # Always search memories for personal statements (to avoid re-learning known info)
+    personal_patterns = [
+        r'(my name is|i\'m |i am |call me )',
+        r'(i work|i live|i like|i prefer|i have|i want)',
+        r'(remember|forgot|mentioned|told you|said)',
+    ]
+    
+    for pattern in personal_patterns:
+        if re.search(pattern, message_lower):
+            return True
+    
+    # Search for questions or substantial messages
+    if '?' in message or len(message_lower.split()) >= 4:
+        return True
+    
+    return False
 
 
 class AgentSystem:
@@ -94,11 +181,11 @@ class AgentSystem:
         # Build context
         context_parts = []
         
-        # Retrieve relevant memories using Mem0
+        # Retrieve relevant memories using Mem0 (only if appropriate)
         memory_system = get_memory_system()
         memories = []
         
-        if memory_system.is_available:
+        if memory_system.is_available and should_search_memories(message):
             memories = await memory_system.search_memories(user_id, message, limit=5)
         
         if memories:
@@ -134,10 +221,13 @@ class AgentSystem:
                 }
             }
         
-        # AUTOMATIC LIBRARY SEARCH - search ALL user documents
-        # If specific document_ids provided, search only those; otherwise search entire library
+        # SMART LIBRARY SEARCH - only search when the message warrants it
+        # If specific document_ids provided, always search those; otherwise check if search is appropriate
         rag = get_rag_engine()
-        doc_results = await rag.search(user_id, message, document_ids, limit=5)
+        doc_results = []
+        
+        if document_ids or should_search_documents(message):
+            doc_results = await rag.search(user_id, message, document_ids, limit=5)
         
         if doc_results:
             doc_text = "\n\n".join([
@@ -233,15 +323,17 @@ class AgentSystem:
         return """You are HAL, a helpful AI assistant running locally. You have access to the user's personal document library and memories.
 
 Key capabilities:
-- You automatically search the user's uploaded documents for relevant information
+- You can search the user's uploaded documents for relevant information when needed
 - You remember important facts about the user from previous conversations
 - All data stays local and private
 
 When answering:
+- For greetings and casual conversation, respond naturally without searching documents
 - If you find relevant information in documents, cite the source (document name)
-- If you use memories, acknowledge them naturally
+- If you recall memories about the user, acknowledge them naturally (e.g., "I remember you mentioned...")
 - Be helpful, concise, and accurate
-- If you don't know something and it's not in the documents, say so honestly"""
+- If you don't know something and it's not in the documents, say so honestly
+- When a user shares personal information (like their name), acknowledge it warmly - this information will be automatically remembered for future conversations"""
     
     async def _get_chat_history(self, chat_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent chat history"""
