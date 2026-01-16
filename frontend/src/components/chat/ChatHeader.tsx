@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Chat } from '@/types';
 import { chats as chatsApi } from '@/lib/api';
+import toast from 'react-hot-toast';
 import { 
   MoreVertical, 
   Edit2, 
@@ -40,24 +41,51 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
       try {
         const updated = await chatsApi.update(chat.id, { title: title.trim() });
         onUpdate(updated);
+        toast.success('Chat renamed');
       } catch (err) {
         console.error('Failed to update title:', err);
         setTitle(chat.title);
+        toast.error('Failed to rename chat');
       }
     }
     setIsEditing(false);
   };
 
   const handleDelete = async () => {
-    if (confirm('Are you sure you want to delete this chat?')) {
-      try {
-        await chatsApi.delete(chat.id);
-        router.push('/chat');
-      } catch (err) {
-        console.error('Failed to delete chat:', err);
-      }
-    }
     setShowMenu(false);
+    
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <p className="font-medium">Delete this chat?</p>
+        <p className="text-sm text-text-secondary">This action cannot be undone.</p>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1.5 text-sm bg-surface hover:bg-bg-tertiary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                await chatsApi.delete(chat.id);
+                toast.success('Chat deleted');
+                router.push('/chat');
+              } catch (err) {
+                console.error('Failed to delete chat:', err);
+                toast.error('Failed to delete chat');
+              }
+            }}
+            className="px-3 py-1.5 text-sm bg-error hover:bg-error/80 text-white rounded-lg transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    ), {
+      duration: Infinity,
+    });
   };
 
   return (
