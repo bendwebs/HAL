@@ -1,0 +1,96 @@
+"""Tools Router - Tool permissions and user toggles"""
+
+from fastapi import APIRouter, HTTPException, status, Depends
+from bson import ObjectId
+from datetime import datetime
+from typing import Dict, Any, List
+
+from app.database import database
+from app.auth import get_current_user
+from app.models.tool import ToolResponse, ToolListResponse, ToolToggleRequest, ToolPermissionLevel
+from app.models.user import UserRole
+
+router = APIRouter(prefix="/tools", tags=["Tools"])
+
+
+@router.get("", response_model=List[ToolResponse])
+async def list_tools(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """List tools with user's permission state"""
+    user_id = current_user["_id"]
+    is_admin = current_user.get("role") == UserRole.ADMIN
+    user_overrides = current_user.get("settings", {}).get("tool_overrides", {})
+    
+    tools = await database.tools.find().sort("display_name", 1).to_list(100)
+    
+    result = []
+    for tool in tools:
+        perm = tool.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
+        
+        # Determine if tool is enabled for this user
+        if perm == ToolPermissionLevel.DISABLED:
+            is_enabled = False
+            can_toggle = False
+        elif perm == ToolPermissionLevel.ADMIN_ONLY:
+            is_enabled = is_admin
+            can_toggle = False
+        elif perm == ToolPermissionLevel.ALWAYS_ON:
+            is_enabled = True
+            can_toggle = False
+        elif perm == ToolPermissionLevel.USER_TOGGLE:
+            # Default on, user can disable
+            is_enabled = user_overrides.get(tool["name"], True)
+            can_toggle = True
+        elif perm == ToolPermissionLevel.OPT_IN:
+            # Default off, user can enable
+            is_enabled = user_overrides.get(tool["name"], False)
+            can_toggle = True
+        else:
+            is_enabled = tool.get("default_enabled", True)
+            can_toggle = False
+        
+        result.append(ToolResponse(
+            id=str(tool["_id"]),
+            name=tool["name"],
+            display_name=tool["display_name"],
+            description=tool.get("description", ""),
+            icon=tool.get("icon", "🔧"),
+            schema=tool.get("schema", {}),
+            permission_level=perm,
+            default_enabled=tool.get("default_enabled", True),
+            config=tool.get("config", {}),
+            usage_count=tool.get("usage_count", 0),
+            last_used=tool.get("last_used"),
+            is_enabled=is_enabled,
+            can_toggle=can_toggle
+        ))
+    
+    return result
+
+
+@router.put("/{tool_id}/toggle")
+async def toggle_tool(
+    tool_id: str,
+    request: ToolToggleRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Toggle tool enabled state for current user"""
+    tool = await database.tools.find_one({"_id": ObjectId(tool_id)})
+    
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    
+    perm = tool.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
+    
+    # Check if tool can be toggled
+    if perm not in [ToolPermissionLevel.USER_TOGGLE, ToolPermissionLevel.OPT_IN]:
+        raise HTTPException(status_code=403, detail="This tool cannot be toggled")
+    
+    # Update user's tool override
+    await database.users.update_one(
+        {"_id": ObjectId(current_user["_id"])},
+        {"$set": {f"settings.tool_overrides.{tool['name']}": request.enabled}}
+    )
+    
+    return {"message": "Tool preference updated", "enabled": request.enabled}
