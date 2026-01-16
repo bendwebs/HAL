@@ -1,1 +1,0 @@
-fix: Startup script Windows encoding and output buffering issues

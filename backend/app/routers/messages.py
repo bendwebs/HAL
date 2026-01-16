@@ -186,6 +186,34 @@ async def send_message(
                 # Send final message with ID
                 yield f"data: {json.dumps({'type': 'saved', 'data': {'message_id': str(result.inserted_id)}})}\n\n"
                 
+                # Auto-extract memories using Mem0
+                recent_messages = await database.messages.find(
+                    {"chat_id": ObjectId(chat_id)}
+                ).sort("created_at", -1).limit(6).to_list(6)
+                
+                if len(recent_messages) >= 2:
+                    recent_messages.reverse()
+                    from app.services.memory_system import get_memory_system
+                    memory_system = get_memory_system()
+                    
+                    if memory_system.is_available:
+                        # Format messages for Mem0
+                        formatted_messages = [
+                            {"role": m["role"], "content": m["content"]} 
+                            for m in recent_messages
+                        ]
+                        
+                        result = await memory_system.add_conversation(
+                            user_id=current_user["_id"],
+                            messages=formatted_messages,
+                            metadata={"chat_id": chat_id}
+                        )
+                        
+                        if result:
+                            extracted = result.get("results", [])
+                            if extracted:
+                                yield f"data: {json.dumps({'type': 'memories_extracted', 'data': {'count': len(extracted), 'memories': [{'id': m.get('id', ''), 'content': m.get('memory', ''), 'event': m.get('event', 'ADD')} for m in extracted]}})}\n\n"
+                
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'data': {'message': str(e)}})}\n\n"
         

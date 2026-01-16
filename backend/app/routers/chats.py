@@ -143,6 +143,19 @@ async def create_chat(
     )
 
 
+@router.post("/warmup", status_code=status.HTTP_200_OK)
+async def warmup_model(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Warm up the AI model for faster first response"""
+    from app.services.agent_system import get_agent_system
+    
+    agent_system = get_agent_system()
+    success = await agent_system.warmup()
+    
+    return {"success": success, "message": "Model warmed up" if success else "Warmup failed"}
+
+
 @router.get("/{chat_id}", response_model=ChatResponse)
 async def get_chat(
     chat_id: str,

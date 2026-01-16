@@ -71,6 +71,7 @@ class PersonaListResponse(BaseModel):
     name: str
     description: str
     avatar_emoji: str
+    temperature: float = 0.7
     is_public: bool
     is_system: bool
     is_owner: bool

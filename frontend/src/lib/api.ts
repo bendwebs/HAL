@@ -106,6 +106,9 @@ export const chats = {
     
   makePrivate: (id: string) =>
     request<any>(`/api/chats/${id}/make-private`, { method: 'POST' }),
+    
+  warmup: () =>
+    request<{ success: boolean; message: string }>('/api/chats/warmup', { method: 'POST' }),
 };
 
 // Messages API
@@ -213,28 +216,23 @@ export const personas = {
     request<void>(`/api/personas/${id}`, { method: 'DELETE' }),
 };
 
-// Memories API
+// Memories API (Mem0-powered)
 export const memories = {
-  list: (params?: { category?: string; search?: string; sort_by?: string; limit?: number }) => {
+  list: (params?: { limit?: number }) => {
     const query = new URLSearchParams();
-    if (params?.category) query.set('category', params.category);
-    if (params?.search) query.set('search', params.search);
-    if (params?.sort_by) query.set('sort_by', params.sort_by);
     if (params?.limit) query.set('limit', params.limit.toString());
     return request<{ memories: any[]; total: number }>(`/api/memories?${query}`);
   },
   
-  categories: () => request<any[]>('/api/memories/categories'),
-  
   get: (id: string) => request<any>(`/api/memories/${id}`),
   
-  create: (data: { content: string; category?: string; importance?: number }) =>
+  create: (data: { content: string; metadata?: Record<string, any> }) =>
     request<any>('/api/memories', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
     
-  update: (id: string, data: { content?: string; category?: string; importance?: number }) =>
+  update: (id: string, data: { content: string }) =>
     request<any>(`/api/memories/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -242,15 +240,24 @@ export const memories = {
     
   delete: (id: string) =>
     request<void>(`/api/memories/${id}`, { method: 'DELETE' }),
-    
-  bulkDelete: (ids: string[]) =>
-    request<void>('/api/memories/bulk-delete', {
-      method: 'POST',
-      body: JSON.stringify({ memory_ids: ids }),
-    }),
+  
+  deleteAll: () =>
+    request<void>('/api/memories', { method: 'DELETE' }),
     
   search: (query: string, limit = 10) =>
-    request<any[]>(`/api/memories/search/semantic?query=${encodeURIComponent(query)}&limit=${limit}`),
+    request<{ query: string; results: any[] }>('/api/memories/search', {
+      method: 'POST',
+      body: JSON.stringify({ query, limit }),
+    }),
+  
+  addConversation: (messages: Array<{ role: string; content: string }>, metadata?: Record<string, any>) =>
+    request<{ extracted: number; memories: any[] }>('/api/memories/conversation', {
+      method: 'POST',
+      body: JSON.stringify({ messages, metadata }),
+    }),
+  
+  history: (id: string) =>
+    request<{ memory_id: string; history: any[] }>(`/api/memories/${id}/history`),
 };
 
 // Tools API

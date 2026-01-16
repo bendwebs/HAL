@@ -1,0 +1,303 @@
+'use client';
+
+import { useEffect, useState, useRef } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { chats as chatsApi, messages as messagesApi } from '@/lib/api';
+import { useAuthStore } from '@/stores/auth';
+import { useUIStore } from '@/stores/ui';
+import { Chat, Message, StreamChunk } from '@/types';
+import ChatMessage from '@/components/chat/ChatMessage';
+import ChatInput from '@/components/chat/ChatInput';
+import ChatHeader from '@/components/chat/ChatHeader';
+import { Loader2, Brain, Sparkles, X } from 'lucide-react';
+
+export default function ChatPage() {
+  const params = useParams();
+  const router = useRouter();
+  const chatId = params.id as string;
+  
+  const { user } = useAuthStore();
+  const { showThinking, showActions } = useUIStore();
+  
+  const [chat, setChat] = useState<Chat | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [streamingMessage, setStreamingMessage] = useState<Partial<Message> | null>(null);
+  const [memoriesUsed, setMemoriesUsed] = useState<any[]>([]);
+  const [memoriesExtracted, setMemoriesExtracted] = useState<any[]>([]);
+  const streamingMessageRef = useRef<Partial<Message> | null>(null);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadChat();
+  }, [chatId]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, streamingMessage]);
+
+  const loadChat = async () => {
+    try {
+      setIsLoading(true);
+      const [chatData, messagesData] = await Promise.all([
+        chatsApi.get(chatId),
+        messagesApi.list(chatId),
+      ]);
+      setChat(chatData);
+      setMessages(messagesData);
+    } catch (err) {
+      console.error('Failed to load chat:', err);
+      router.push('/chat');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const handleSendMessage = async (content: string, documentIds: string[] = []) => {
+    if (!content.trim() || isSending) return;
+
+    // Add user message immediately
+    const userMessage: Message = {
+      id: `temp-${Date.now()}`,
+      chat_id: chatId,
+      role: 'user',
+      content,
+      thinking: null,
+      actions: [],
+      document_ids: documentIds,
+      model_used: null,
+      token_usage: null,
+      created_at: new Date().toISOString(),
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
+    setIsSending(true);
+    
+    // Initialize streaming message
+    const initialStreamingMsg: Partial<Message> = {
+      id: `streaming-${Date.now()}`,
+      chat_id: chatId,
+      role: 'assistant',
+      content: '',
+      thinking: null,
+      actions: [],
+      document_ids: [],
+      model_used: null,
+      token_usage: null,
+      created_at: new Date().toISOString(),
+    };
+    streamingMessageRef.current = initialStreamingMsg;
+    setStreamingMessage(initialStreamingMsg);
+    setMemoriesUsed([]);
+    setMemoriesExtracted([]);
+
+    try {
+      for await (const chunk of messagesApi.sendStream(chatId, content, documentIds)) {
+        handleStreamChunk(chunk as StreamChunk);
+      }
+    } catch (err) {
+      console.error('Failed to send message:', err);
+      setStreamingMessage(prev => prev ? {
+        ...prev,
+        content: prev.content + '\n\n*Error: Failed to get response. Please try again.*',
+      } : null);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleStreamChunk = (chunk: StreamChunk) => {
+    const current = streamingMessageRef.current;
+    if (!current) return;
+
+    switch (chunk.type) {
+      case 'thinking':
+        streamingMessageRef.current = { ...current, thinking: chunk.data.content || '' };
+        setStreamingMessage(streamingMessageRef.current);
+        break;
+        
+      case 'content':
+        streamingMessageRef.current = { 
+          ...current, 
+          content: (current.content || '') + (chunk.data.delta || '') 
+        };
+        setStreamingMessage(streamingMessageRef.current);
+        break;
+        
+      case 'action_complete':
+        streamingMessageRef.current = { 
+          ...current, 
+          actions: [...(current.actions || []), chunk.data] 
+        };
+        setStreamingMessage(streamingMessageRef.current);
+        break;
+        
+      case 'done':
+        streamingMessageRef.current = { 
+          ...current, 
+          model_used: chunk.data.model,
+          token_usage: chunk.data.token_usage 
+        };
+        setStreamingMessage(streamingMessageRef.current);
+        break;
+        
+      case 'saved':
+        // Message has been saved - move from streaming to messages list
+        const finalMessage: Message = {
+          ...streamingMessageRef.current,
+          id: chunk.data.message_id,
+        } as Message;
+        streamingMessageRef.current = null;
+        setStreamingMessage(null);
+        setMessages(msgs => [...msgs, finalMessage]);
+        break;
+      
+      case 'memories_used':
+        // Memories that were used to generate this response
+        setMemoriesUsed(chunk.data.memories || []);
+        break;
+      
+      case 'memories_extracted':
+        // New memories extracted from this conversation
+        setMemoriesExtracted(chunk.data.memories || []);
+        break;
+        
+      case 'error':
+        streamingMessageRef.current = { 
+          ...current, 
+          content: (current.content || '') + `\n\n*Error: ${chunk.data.message}*` 
+        };
+        setStreamingMessage(streamingMessageRef.current);
+        break;
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-accent" />
+      </div>
+    );
+  }
+
+  if (!chat) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-text-secondary">Chat not found</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      <ChatHeader chat={chat} onUpdate={setChat} />
+      
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-3xl mx-auto space-y-6">
+          {messages.length === 0 && !streamingMessage && (
+            <div className="text-center py-12">
+              <div className="text-5xl mb-4">🤖</div>
+              <h2 className="text-xl font-semibold text-text-primary mb-2">
+                How can I help you?
+              </h2>
+              <p className="text-text-secondary">
+                Ask me anything or upload documents for analysis
+              </p>
+            </div>
+          )}
+          
+          {messages.map(message => (
+            <ChatMessage
+              key={message.id}
+              message={message}
+              showThinking={showThinking}
+              showActions={showActions}
+            />
+          ))}
+          
+          {streamingMessage && (
+            <ChatMessage
+              message={streamingMessage as Message}
+              showThinking={showThinking}
+              showActions={showActions}
+              isStreaming
+            />
+          )}
+          
+          {/* Memory Usage Indicator */}
+          {memoriesUsed.length > 0 && !isSending && (
+            <div className="max-w-3xl mx-auto">
+              <div className="flex items-start gap-2 p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                <Brain className="w-4 h-4 text-purple-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-purple-300 font-medium mb-1">
+                    Used {memoriesUsed.length} memories
+                  </p>
+                  <div className="space-y-1">
+                    {memoriesUsed.slice(0, 3).map((m, i) => (
+                      <p key={i} className="text-xs text-text-muted truncate">
+                        • {m.content}
+                      </p>
+                    ))}
+                    {memoriesUsed.length > 3 && (
+                      <p className="text-xs text-text-muted">
+                        +{memoriesUsed.length - 3} more
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setMemoriesUsed([])}
+                  className="p-1 text-text-muted hover:text-text-primary"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+          
+          {/* Memory Extraction Indicator */}
+          {memoriesExtracted.length > 0 && !isSending && (
+            <div className="max-w-3xl mx-auto">
+              <div className="flex items-start gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <Sparkles className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-green-300 font-medium mb-1">
+                    Learned {memoriesExtracted.length} new things
+                  </p>
+                  <div className="space-y-1">
+                    {memoriesExtracted.map((m, i) => (
+                      <p key={i} className="text-xs text-text-muted truncate">
+                        • {m.content}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setMemoriesExtracted([])}
+                  className="p-1 text-text-muted hover:text-text-primary"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+          
+          <div ref={messagesEndRef} />
+        </div>
+      </div>
+      
+      <ChatInput
+        onSend={handleSendMessage}
+        disabled={isSending}
+        canWrite={chat.can_write}
+      />
+    </div>
+  );
+}

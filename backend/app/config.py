@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # File Upload
     upload_dir: str = "./uploads"
     max_upload_size: int = 52428800  # 50MB
+    data_dir: str = "./data"  # For Qdrant and other local storage
     
     # Agent Limits
     max_agent_depth: int = 3

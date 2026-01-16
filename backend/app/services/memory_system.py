@@ -1,210 +1,221 @@
-"""Memory System - Mem0-style memory management"""
+"""Memory System - Mem0 Integration for HAL
 
+Uses the official mem0ai library for intelligent memory management.
+Configured to work with local Ollama for LLM and embeddings.
+"""
+
+from __future__ import annotations
 from typing import List, Dict, Any, Optional
-from bson import ObjectId
 from datetime import datetime
+import os
 
-from app.database import database
 from app.config import settings
-from app.services.ollama_client import get_ollama_client
+
+
+def _get_mem0_config() -> dict:
+    """Get Mem0 configuration for local Ollama setup"""
+    return {
+        "llm": {
+            "provider": "ollama",
+            "config": {
+                "model": settings.default_chat_model,
+                "temperature": 0.1,
+                "max_tokens": 2000,
+                "ollama_base_url": settings.ollama_base_url,
+            }
+        },
+        "embedder": {
+            "provider": "ollama", 
+            "config": {
+                "model": settings.default_embed_model,
+                "ollama_base_url": settings.ollama_base_url,
+            }
+        },
+        "vector_store": {
+            "provider": "qdrant",
+            "config": {
+                "collection_name": "hal_memories",
+                "path": os.path.join(settings.data_dir, "qdrant"),
+            }
+        },
+        "version": "v1.1"
+    }
 
 
 class MemorySystem:
-    """Mem0-inspired memory system for storing and retrieving user memories"""
+    """Mem0-powered memory system for HAL"""
     
     def __init__(self):
-        self.embed_model = settings.default_embed_model
+        self._memory = None
+        self._init_error = None
+        self._initialize()
     
-    async def generate_embedding(self, text: str) -> List[float]:
-        """Generate embedding for text"""
-        ollama = get_ollama_client()
+    def _initialize(self):
+        """Initialize Mem0 with local Ollama configuration"""
         try:
-            return await ollama.embed(self.embed_model, text)
+            from mem0 import Memory
+            config = _get_mem0_config()
+            self._memory = Memory.from_config(config)
+            print(f"[OK] Mem0 initialized with Ollama ({settings.default_chat_model})")
+        except ImportError as e:
+            self._init_error = f"mem0ai not installed: {e}"
+            print(f"[WARN] Mem0 not available: {self._init_error}")
         except Exception as e:
-            print(f"Error generating embedding: {e}")
-            return []
+            self._init_error = str(e)
+            print(f"[WARN] Mem0 initialization failed: {self._init_error}")
     
-    async def add_memory(
-        self,
-        user_id: str,
-        content: str,
-        category: str = "general",
-        importance: float = 0.5,
-        source_chat_id: Optional[str] = None
-    ) -> str:
-        """Add a new memory"""
-        embedding = await self.generate_embedding(content)
-        
-        memory_doc = {
-            "user_id": ObjectId(user_id),
-            "content": content,
-            "category": category,
-            "importance": importance,
-            "embedding": embedding,
-            "source_chat_id": ObjectId(source_chat_id) if source_chat_id else None,
-            "access_count": 0,
-            "created_at": datetime.utcnow(),
-            "last_accessed": None
-        }
-        
-        result = await database.memories.insert_one(memory_doc)
-        return str(result.inserted_id)
+    @property
+    def is_available(self) -> bool:
+        """Check if Mem0 is properly initialized"""
+        return self._memory is not None
     
-    async def search_memories(
-        self,
-        user_id: str,
-        query: str,
-        limit: int = 10,
-        min_importance: float = 0.0
-    ) -> List[Dict[str, Any]]:
-        """Search memories by semantic similarity"""
-        query_embedding = await self.generate_embedding(query)
-        
-        if not query_embedding:
-            return []
-        
-        # Get user's memories
-        memories = await database.memories.find({
-            "user_id": ObjectId(user_id),
-            "importance": {"$gte": min_importance}
-        }).to_list(500)
-        
-        # Calculate relevance scores
-        results = []
-        for memory in memories:
-            if memory.get("embedding"):
-                similarity = self._cosine_similarity(query_embedding, memory["embedding"])
-                
-                # Boost score based on recency and access frequency
-                recency_boost = self._recency_score(memory["created_at"])
-                importance_boost = memory.get("importance", 0.5)
-                
-                # Combined relevance score
-                relevance = (similarity * 0.6) + (recency_boost * 0.2) + (importance_boost * 0.2)
-                
-                results.append({
-                    "id": str(memory["_id"]),
-                    "content": memory["content"],
-                    "category": memory.get("category", "general"),
-                    "importance": memory.get("importance", 0.5),
-                    "relevance_score": relevance,
-                    "created_at": memory["created_at"]
-                })
-        
-        # Sort by relevance
-        results.sort(key=lambda x: x["relevance_score"], reverse=True)
-        
-        # Update access counts for returned memories
-        top_results = results[:limit]
-        if top_results:
-            memory_ids = [ObjectId(r["id"]) for r in top_results]
-            await database.memories.update_many(
-                {"_id": {"$in": memory_ids}},
-                {
-                    "$inc": {"access_count": 1},
-                    "$set": {"last_accessed": datetime.utcnow()}
-                }
-            )
-        
-        return top_results
-    
-    async def extract_memories_from_chat(
-        self,
-        user_id: str,
-        chat_id: str,
-        messages: List[Dict[str, Any]]
-    ) -> List[str]:
-        """Extract and store memories from a chat conversation"""
-        # Build a prompt to extract key facts/preferences
-        conversation = "\n".join([
-            f"{m['role']}: {m['content']}" 
-            for m in messages[-10:]  # Last 10 messages
-        ])
-        
-        extraction_prompt = f"""Analyze this conversation and extract key facts, preferences, or important information about the user that should be remembered for future conversations.
-
-Conversation:
-{conversation}
-
-Extract 0-3 memories. Each memory should be:
-- A single, clear statement about the user
-- Factual or preference-based
-- Useful for personalizing future interactions
-
-Return each memory on a new line, or "NONE" if no memories worth storing.
-Memories:"""
-        
-        ollama = get_ollama_client()
+    async def add_memory(self, user_id: str, content: str, metadata: Optional[Dict[str, Any]] = None):
+        """Add a memory for a user"""
+        if not self.is_available:
+            return None
         
         try:
-            response = await ollama.generate(
-                model=settings.default_chat_model,
-                prompt=extraction_prompt,
-                temperature=0.3
-            )
+            result = self._memory.add(content, user_id=user_id, metadata=metadata or {})
+            return result
+        except Exception as e:
+            print(f"Error adding memory: {e}")
+            return None
+    
+    async def add_conversation(self, user_id: str, messages: List[Dict[str, str]], metadata: Optional[Dict[str, Any]] = None):
+        """Add memories from a conversation"""
+        if not self.is_available:
+            return None
+        
+        try:
+            result = self._memory.add(messages, user_id=user_id, metadata=metadata or {})
+            return result
+        except Exception as e:
+            print(f"Error adding conversation memories: {e}")
+            return None
+    
+    async def search_memories(self, user_id: str, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search memories by semantic similarity"""
+        if not self.is_available:
+            return []
+        
+        try:
+            results = self._memory.search(query, user_id=user_id, limit=limit)
             
-            response_text = response.get("response", "")
-            
-            if "NONE" in response_text.upper():
-                return []
-            
-            # Parse memories
             memories = []
-            for line in response_text.strip().split("\n"):
-                line = line.strip()
-                if line and len(line) > 10 and not line.upper().startswith("NONE"):
-                    # Clean up common prefixes
-                    for prefix in ["- ", "• ", "* ", "1. ", "2. ", "3. "]:
-                        if line.startswith(prefix):
-                            line = line[len(prefix):]
-                    
-                    if line:
-                        memory_id = await self.add_memory(
-                            user_id=user_id,
-                            content=line,
-                            category="auto_extracted",
-                            importance=0.6,
-                            source_chat_id=chat_id
-                        )
-                        memories.append(memory_id)
+            for r in results.get("results", []):
+                memories.append({
+                    "id": r.get("id", ""),
+                    "content": r.get("memory", ""),
+                    "score": r.get("score", 0.0),
+                    "metadata": r.get("metadata", {}),
+                    "created_at": r.get("created_at", ""),
+                    "categories": r.get("categories", [])
+                })
             
             return memories
-            
         except Exception as e:
-            print(f"Error extracting memories: {e}")
+            print(f"Error searching memories: {e}")
             return []
     
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        """Calculate cosine similarity"""
-        if not vec1 or not vec2 or len(vec1) != len(vec2):
-            return 0.0
+    async def get_all_memories(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get all memories for a user"""
+        if not self.is_available:
+            return []
         
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
-        norm1 = sum(a * a for a in vec1) ** 0.5
-        norm2 = sum(b * b for b in vec2) ** 0.5
-        
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        
-        return dot_product / (norm1 * norm2)
+        try:
+            results = self._memory.get_all(user_id=user_id, limit=limit)
+            
+            memories = []
+            for r in results.get("results", []):
+                memories.append({
+                    "id": r.get("id", ""),
+                    "content": r.get("memory", ""),
+                    "metadata": r.get("metadata", {}),
+                    "created_at": r.get("created_at", ""),
+                    "updated_at": r.get("updated_at", ""),
+                    "categories": r.get("categories", [])
+                })
+            
+            return memories
+        except Exception as e:
+            print(f"Error getting memories: {e}")
+            return []
     
-    def _recency_score(self, created_at: datetime) -> float:
-        """Calculate recency score (0-1, higher = more recent)"""
-        now = datetime.utcnow()
-        age_days = (now - created_at).days
+    async def get_memory(self, memory_id: str):
+        """Get a specific memory by ID"""
+        if not self.is_available:
+            return None
         
-        # Decay over 90 days
-        if age_days >= 90:
-            return 0.1
+        try:
+            result = self._memory.get(memory_id)
+            if result:
+                return {
+                    "id": result.get("id", ""),
+                    "content": result.get("memory", ""),
+                    "metadata": result.get("metadata", {}),
+                    "created_at": result.get("created_at", ""),
+                    "updated_at": result.get("updated_at", ""),
+                    "categories": result.get("categories", [])
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting memory: {e}")
+            return None
+    
+    async def update_memory(self, memory_id: str, content: str):
+        """Update an existing memory"""
+        if not self.is_available:
+            return None
         
-        return 1.0 - (age_days / 90) * 0.9
+        try:
+            result = self._memory.update(memory_id, content)
+            return result
+        except Exception as e:
+            print(f"Error updating memory: {e}")
+            return None
+    
+    async def delete_memory(self, memory_id: str) -> bool:
+        """Delete a memory"""
+        if not self.is_available:
+            return False
+        
+        try:
+            self._memory.delete(memory_id)
+            return True
+        except Exception as e:
+            print(f"Error deleting memory: {e}")
+            return False
+    
+    async def delete_all_memories(self, user_id: str) -> bool:
+        """Delete all memories for a user"""
+        if not self.is_available:
+            return False
+        
+        try:
+            self._memory.delete_all(user_id=user_id)
+            return True
+        except Exception as e:
+            print(f"Error deleting all memories: {e}")
+            return False
+    
+    def get_history(self, memory_id: str) -> list:
+        """Get history of a memory"""
+        if not self.is_available:
+            return []
+        
+        try:
+            return self._memory.history(memory_id)
+        except Exception as e:
+            print(f"Error getting memory history: {e}")
+            return []
 
 
-# Singleton
-_system: Optional[MemorySystem] = None
+# Singleton instance
+_system = None
 
 
 def get_memory_system() -> MemorySystem:
+    """Get the singleton memory system instance"""
     global _system
     if _system is None:
         _system = MemorySystem()
