@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Fira_Code } from "next/font/google";
+import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
 const inter = Inter({
@@ -26,6 +27,24 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} ${firaCode.variable} antialiased`}>
         {children}
+        <Toaster 
+          position="bottom-right"
+          toastOptions={{
+            className: '!bg-bg-elevated !text-text-primary !border !border-border',
+            success: {
+              iconTheme: {
+                primary: '#10b981',
+                secondary: '#fff',
+              },
+            },
+            error: {
+              iconTheme: {
+                primary: '#ef4444',
+                secondary: '#fff',
+              },
+            },
+          }}
+        />
       </body>
     </html>
   );
