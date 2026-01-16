@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { documents } from '@/lib/api';
 import { FileText, Upload, Trash2, Search, File, Image, FileSpreadsheet } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
+import toast from 'react-hot-toast';
 
 interface Document {
   id: string;
@@ -80,14 +81,38 @@ export default function LibraryPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this document?')) return;
-    
-    try {
-      await documents.delete(id);
-      setDocs(docs.filter(d => d.id !== id));
-    } catch (err) {
-      console.error('Failed to delete document:', err);
-    }
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <p className="font-medium">Delete this document?</p>
+        <p className="text-sm text-text-secondary">This action cannot be undone.</p>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1.5 text-sm bg-surface hover:bg-bg-tertiary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                await documents.delete(id);
+                setDocs(docs.filter(d => d.id !== id));
+                toast.success('Document deleted');
+              } catch (err) {
+                console.error('Failed to delete document:', err);
+                toast.error('Failed to delete document');
+              }
+            }}
+            className="px-3 py-1.5 text-sm bg-error hover:bg-error/80 text-white rounded-lg transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    ), {
+      duration: Infinity,
+    });
   };
 
   const formatSize = (bytes: number) => {

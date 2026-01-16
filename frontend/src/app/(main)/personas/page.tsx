@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { personas } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { Users, Plus, Trash2, Edit2, Bot, Globe, Lock } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 interface Persona {
   id: string;
@@ -104,14 +105,37 @@ export default function PersonasPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this persona?')) return;
-    
-    try {
-      await personas.delete(id);
-      setPersonaList(personaList.filter(p => p.id !== id));
-    } catch (err) {
-      console.error('Failed to delete persona:', err);
-    }
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <p className="font-medium">Delete this persona?</p>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1.5 text-sm bg-surface hover:bg-bg-tertiary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                await personas.delete(id);
+                setPersonaList(personaList.filter(p => p.id !== id));
+                toast.success('Persona deleted');
+              } catch (err) {
+                console.error('Failed to delete persona:', err);
+                toast.error('Failed to delete persona');
+              }
+            }}
+            className="px-3 py-1.5 text-sm bg-error hover:bg-error/80 text-white rounded-lg transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    ), {
+      duration: Infinity,
+    });
   };
 
   return (

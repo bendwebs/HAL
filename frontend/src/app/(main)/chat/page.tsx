@@ -6,6 +6,7 @@ import { chats as chatsApi } from '@/lib/api';
 import { ChatListItem } from '@/types';
 import { Plus, MessageSquare, Lock, Users, Globe, Trash2, CheckSquare, Square, X } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
+import toast from 'react-hot-toast';
 
 const visibilityIcons = {
   private: Lock,
@@ -67,20 +68,45 @@ export default function ChatListPage() {
 
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Are you sure you want to delete ${selectedIds.size} chat(s)?`)) return;
     
-    setIsDeleting(true);
-    try {
-      await Promise.all(
-        Array.from(selectedIds).map(id => chatsApi.delete(id))
-      );
-      setChatList(chatList.filter(c => !selectedIds.has(c.id)));
-      clearSelection();
-    } catch (err) {
-      console.error('Failed to delete chats:', err);
-    } finally {
-      setIsDeleting(false);
-    }
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <p className="font-medium">Delete {selectedIds.size} chat(s)?</p>
+        <p className="text-sm text-text-secondary">This action cannot be undone.</p>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1.5 text-sm bg-surface hover:bg-bg-tertiary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              setIsDeleting(true);
+              try {
+                await Promise.all(
+                  Array.from(selectedIds).map(id => chatsApi.delete(id))
+                );
+                setChatList(chatList.filter(c => !selectedIds.has(c.id)));
+                clearSelection();
+                toast.success(`Deleted ${selectedIds.size} chat(s)`);
+              } catch (err) {
+                console.error('Failed to delete chats:', err);
+                toast.error('Failed to delete chats');
+              } finally {
+                setIsDeleting(false);
+              }
+            }}
+            className="px-3 py-1.5 text-sm bg-error hover:bg-error/80 text-white rounded-lg transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    ), {
+      duration: Infinity,
+    });
   };
 
   const handleChatClick = (chat: ChatListItem) => {

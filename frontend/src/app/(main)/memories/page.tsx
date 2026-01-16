@@ -7,6 +7,7 @@ import {
   Sparkles, Clock, AlertCircle
 } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
+import toast from 'react-hot-toast';
 
 interface Memory {
   id: string;
@@ -102,30 +103,76 @@ export default function MemoriesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this memory?')) return;
-    
-    try {
-      await memories.delete(id);
-      setMemoryList(memoryList.filter(m => m.id !== id));
-      if (searchResults) {
-        setSearchResults(searchResults.filter(m => m.id !== id));
-      }
-    } catch (err) {
-      console.error('Failed to delete memory:', err);
-    }
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <p className="font-medium">Delete this memory?</p>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1.5 text-sm bg-surface hover:bg-bg-tertiary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                await memories.delete(id);
+                setMemoryList(memoryList.filter(m => m.id !== id));
+                if (searchResults) {
+                  setSearchResults(searchResults.filter(m => m.id !== id));
+                }
+                toast.success('Memory deleted');
+              } catch (err) {
+                console.error('Failed to delete memory:', err);
+                toast.error('Failed to delete memory');
+              }
+            }}
+            className="px-3 py-1.5 text-sm bg-error hover:bg-error/80 text-white rounded-lg transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    ), {
+      duration: Infinity,
+    });
   };
 
   const handleDeleteAll = async () => {
-    if (!confirm('Delete ALL memories? This cannot be undone.')) return;
-    if (!confirm('Are you really sure? All your memories will be permanently deleted.')) return;
-    
-    try {
-      await memories.deleteAll();
-      setMemoryList([]);
-      setSearchResults(null);
-    } catch (err) {
-      console.error('Failed to delete all memories:', err);
-    }
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <p className="font-medium">Delete ALL memories?</p>
+        <p className="text-sm text-text-secondary">This cannot be undone.</p>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1.5 text-sm bg-surface hover:bg-bg-tertiary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                await memories.deleteAll();
+                setMemoryList([]);
+                setSearchResults(null);
+                toast.success('All memories deleted');
+              } catch (err) {
+                console.error('Failed to delete all memories:', err);
+                toast.error('Failed to delete memories');
+              }
+            }}
+            className="px-3 py-1.5 text-sm bg-error hover:bg-error/80 text-white rounded-lg transition-colors"
+          >
+            Delete All
+          </button>
+        </div>
+      </div>
+    ), {
+      duration: Infinity,
+    });
   };
 
   const startEditing = (memory: Memory) => {
