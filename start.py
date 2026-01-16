@@ -11,13 +11,12 @@ import threading
 import os
 from datetime import datetime
 from pathlib import Path
+import io
 
-# Fix Windows console encoding
+# Force UTF-8 output on Windows
 if os.name == 'nt':
-    import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'replace')
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'replace')
-    os.system('chcp 65001 >nul 2>&1')
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Configuration
 BASE_DIR = Path(__file__).parent
@@ -31,34 +30,77 @@ PYTHON_EXE = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
 BACKEND_CMD = [PYTHON_EXE, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 FRONTEND_CMD = ["npm.cmd" if os.name == "nt" else "npm", "run", "dev"]
 
-RESTART_DELAY = 3
-MAX_RESTART_ATTEMPTS = 10
-RESTART_WINDOW = 60
+RESTART_DELAY = 3  # seconds to wait before restarting
+MAX_RESTART_ATTEMPTS = 10  # max restarts within the window
+RESTART_WINDOW = 60  # seconds - reset restart counter after this
 
-# Simple ASCII-safe colors
+# ANSI colors for terminal output
 class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
     CYAN = '\033[96m'
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
     RED = '\033[91m'
-    BLUE = '\033[94m'
-    BOLD = '\033[1m'
     END = '\033[0m'
+    BOLD = '\033[1m'
 
-
-def run_command(cmd, cwd=None, capture=True):
-    """Run a command and return output"""
+# Enable ANSI colors on Windows
+if os.name == 'nt':
+    os.system('color')
     try:
-        result = subprocess.run(
-            cmd, 
-            cwd=cwd, 
-            capture_output=capture, 
-            text=True,
-            shell=(os.name == 'nt')
-        )
-        return result.returncode == 0, result.stdout if capture else "", result.stderr if capture else ""
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except:
+        pass
+
+
+def log(name, message, color=Colors.END, level="INFO"):
+    """Thread-safe logging"""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    level_colors = {
+        "INFO": Colors.GREEN,
+        "WARN": Colors.YELLOW,
+        "ERROR": Colors.RED,
+        "DEBUG": Colors.CYAN
+    }
+    level_color = level_colors.get(level, "")
+    try:
+        print(f"{Colors.BOLD}[{timestamp}]{Colors.END} {color}[{name:8}]{Colors.END} {level_color}{level:5}{Colors.END} {message}", flush=True)
+    except:
+        print(f"[{timestamp}] [{name:8}] {level:5} {message}", flush=True)
+
+
+def stream_output(process, name, color, should_run):
+    """Stream process output line by line"""
+    try:
+        while should_run():
+            line = process.stdout.readline()
+            if not line:
+                if process.poll() is not None:
+                    break
+                continue
+            
+            line = line.rstrip()
+            if not line:
+                continue
+            
+            try:
+                # Color code certain keywords
+                line_lower = line.lower()
+                if 'error' in line_lower:
+                    print(f"{color}[{name:8}]{Colors.END} {Colors.RED}{line}{Colors.END}", flush=True)
+                elif 'warn' in line_lower:
+                    print(f"{color}[{name:8}]{Colors.END} {Colors.YELLOW}{line}{Colors.END}", flush=True)
+                elif any(kw in line_lower for kw in ['ready', 'started', 'listening', 'running', 'connected']):
+                    print(f"{color}[{name:8}]{Colors.END} {Colors.GREEN}{line}{Colors.END}", flush=True)
+                else:
+                    print(f"{color}[{name:8}]{Colors.END} {line}", flush=True)
+            except:
+                print(f"[{name:8}] {line}", flush=True)
     except Exception as e:
-        return False, "", str(e)
+        log(name, f"Output stream error: {e}", color, "ERROR")
 
 
 class ProcessManager:
@@ -75,115 +117,108 @@ class ProcessManager:
         self.restart_count = 0
         self.last_restart_reset = time.time()
         self.thread = None
-        self.lock = threading.Lock()
-    
-    def log(self, message, level="INFO"):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        level_colors = {
-            "INFO": Colors.GREEN,
-            "WARN": Colors.YELLOW,
-            "ERROR": Colors.RED,
-            "DEBUG": Colors.CYAN
-        }
-        level_color = level_colors.get(level, "")
-        try:
-            print(f"{Colors.BOLD}[{timestamp}]{Colors.END} {self.color}[{self.name:8}]{Colors.END} {level_color}{level:5}{Colors.END} {message}")
-        except:
-            print(f"[{timestamp}] [{self.name:8}] {level:5} {message}")
+        self.output_thread = None
     
     def start(self):
+        """Start the process manager thread"""
         self.should_run = True
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
     
     def stop(self):
+        """Stop the process"""
         self.should_run = False
-        with self.lock:
-            if self.process:
-                self.log("Stopping process...", "WARN")
+        if self.process:
+            log(self.name, "Stopping process...", self.color, "WARN")
+            try:
+                if os.name == 'nt':
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.process.pid)], 
+                                  capture_output=True, timeout=5)
+                else:
+                    self.process.terminate()
+                    self.process.wait(timeout=5)
+            except Exception as e:
+                log(self.name, f"Error stopping: {e}", self.color, "WARN")
                 try:
-                    if os.name == 'nt':
-                        subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.process.pid)], 
-                                      capture_output=True)
-                    else:
-                        self.process.terminate()
-                        self.process.wait(timeout=5)
-                except Exception as e:
-                    try:
-                        self.process.kill()
-                    except:
-                        pass
-                self.process = None
+                    self.process.kill()
+                except:
+                    pass
+            self.process = None
     
     def _run_loop(self):
+        """Main loop that runs and restarts the process"""
         while self.should_run:
+            # Reset restart counter if outside window
             if time.time() - self.last_restart_reset > RESTART_WINDOW:
                 self.restart_count = 0
                 self.last_restart_reset = time.time()
             
+            # Check if we've exceeded max restarts
             if self.restart_count >= MAX_RESTART_ATTEMPTS:
-                self.log(f"Max restarts exceeded. Waiting {RESTART_WINDOW}s...", "ERROR")
+                log(self.name, f"Max restarts ({MAX_RESTART_ATTEMPTS}) exceeded. Waiting {RESTART_WINDOW}s...", self.color, "ERROR")
                 time.sleep(RESTART_WINDOW)
                 self.restart_count = 0
                 self.last_restart_reset = time.time()
             
             try:
-                self.log("Starting process...", "INFO")
+                log(self.name, f"Starting: {' '.join(self.cmd[:3])}...", self.color, "INFO")
                 
-                with self.lock:
-                    self.process = subprocess.Popen(
-                        self.cmd,
-                        cwd=self.cwd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        env=self.env,
-                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-                    )
+                # Start the process
+                startupinfo = None
+                if os.name == 'nt':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 
-                while self.should_run:
-                    line = self.process.stdout.readline()
-                    if not line:
-                        break
-                    line = line.rstrip()
-                    if line:
-                        try:
-                            if 'error' in line.lower():
-                                print(f"{self.color}[{self.name:8}]{Colors.END} {Colors.RED}{line}{Colors.END}")
-                            elif 'warn' in line.lower():
-                                print(f"{self.color}[{self.name:8}]{Colors.END} {Colors.YELLOW}{line}{Colors.END}")
-                            elif 'ready' in line.lower() or 'started' in line.lower():
-                                print(f"{self.color}[{self.name:8}]{Colors.END} {Colors.GREEN}{line}{Colors.END}")
-                            else:
-                                print(f"{self.color}[{self.name:8}]{Colors.END} {line}")
-                        except:
-                            print(f"[{self.name:8}] {line}")
+                self.process = subprocess.Popen(
+                    self.cmd,
+                    cwd=self.cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    env=self.env,
+                    startupinfo=startupinfo,
+                    encoding='utf-8',
+                    errors='replace'
+                )
                 
-                exit_code = self.process.wait() if self.process else 0
+                # Stream output in separate thread
+                self.output_thread = threading.Thread(
+                    target=stream_output,
+                    args=(self.process, self.name, self.color, lambda: self.should_run),
+                    daemon=True
+                )
+                self.output_thread.start()
+                
+                # Wait for process to exit
+                exit_code = self.process.wait()
                 
                 if self.should_run:
-                    self.log(f"Process exited with code {exit_code}", "WARN")
+                    log(self.name, f"Process exited with code {exit_code}", self.color, "WARN" if exit_code != 0 else "INFO")
                     self.restart_count += 1
-                    self.log(f"Restarting in {RESTART_DELAY}s...", "WARN")
+                    log(self.name, f"Restarting in {RESTART_DELAY}s... (attempt {self.restart_count}/{MAX_RESTART_ATTEMPTS})", self.color, "WARN")
                     time.sleep(RESTART_DELAY)
                 
-            except FileNotFoundError as e:
-                self.log(f"Command not found: {e}", "ERROR")
+            except FileNotFoundError:
+                log(self.name, f"Command not found: {self.cmd[0]}", self.color, "ERROR")
                 self.restart_count += 1
                 time.sleep(RESTART_DELAY)
             except Exception as e:
-                self.log(f"Error: {e}", "ERROR")
+                log(self.name, f"Error: {e}", self.color, "ERROR")
                 self.restart_count += 1
                 time.sleep(RESTART_DELAY)
 
 
 class HALRunner:
+    """Main runner that manages all processes"""
+    
     def __init__(self):
         self.managers = []
         self.running = False
     
     def setup(self):
+        """Initialize process managers"""
+        # Backend
         backend_env = os.environ.copy()
         if VENV_PYTHON.exists():
             venv_bin = VENV_PYTHON.parent
@@ -198,6 +233,7 @@ class HALRunner:
             env=backend_env
         ))
         
+        # Frontend
         self.managers.append(ProcessManager(
             name="Frontend",
             cmd=FRONTEND_CMD,
@@ -206,10 +242,12 @@ class HALRunner:
         ))
     
     def print_banner(self):
+        """Print startup banner"""
         try:
-            print(f"""
+            banner = f"""
 {Colors.BOLD}{Colors.CYAN}
   HAL - Local AI System
+  ======================
 {Colors.END}
   Backend:  {Colors.CYAN}http://localhost:8000{Colors.END}
   Frontend: {Colors.BLUE}http://localhost:3000{Colors.END}
@@ -219,31 +257,46 @@ class HALRunner:
   
   Press {Colors.RED}Ctrl+C{Colors.END} to stop all services
 {Colors.BOLD}{'='*50}{Colors.END}
-""")
+"""
+            print(banner, flush=True)
         except:
-            print("\nHAL - Local AI System")
-            print("Backend:  http://localhost:8000")
-            print("Frontend: http://localhost:3000")
-            print("Press Ctrl+C to stop\n")
+            print("\n  HAL - Local AI System")
+            print("  ======================")
+            print("  Backend:  http://localhost:8000")
+            print("  Frontend: http://localhost:3000")
+            print("  API Docs: http://localhost:8000/docs")
+            print("  Default Login: admin / admin123")
+            print("  Press Ctrl+C to stop")
+            print("=" * 50 + "\n", flush=True)
     
     def start(self):
+        """Start all processes"""
         self.running = True
         self.print_banner()
         
         for manager in self.managers:
             manager.start()
-            time.sleep(2)
+            time.sleep(2)  # Stagger startup
     
     def stop(self):
-        print("\nShutting down HAL...")
+        """Stop all processes"""
+        try:
+            print(f"\n{Colors.YELLOW}Shutting down HAL...{Colors.END}", flush=True)
+        except:
+            print("\nShutting down HAL...", flush=True)
+        
         self.running = False
         
         for manager in self.managers:
             manager.stop()
         
-        print("All services stopped.")
+        try:
+            print(f"{Colors.GREEN}All services stopped.{Colors.END}", flush=True)
+        except:
+            print("All services stopped.", flush=True)
     
     def wait(self):
+        """Wait for interrupt signal"""
         try:
             while self.running:
                 time.sleep(0.5)
@@ -251,130 +304,111 @@ class HALRunner:
             pass
 
 
-def setup_backend():
-    print("Setting up Backend...")
-    
-    venv_dir = BACKEND_DIR / "venv"
-    pip_exe = venv_dir / ("Scripts" if os.name == "nt" else "bin") / ("pip.exe" if os.name == "nt" else "pip")
-    
-    if not venv_dir.exists():
-        print("  Creating Python virtual environment...")
-        success, _, err = run_command([sys.executable, "-m", "venv", str(venv_dir)])
-        if not success:
-            print(f"  ERROR: Failed to create venv: {err}")
-            return False
-        print("  OK: Virtual environment created")
-    else:
-        print("  OK: Virtual environment exists")
-    
-    print("  Installing Python dependencies...")
-    
-    result = subprocess.run(
-        [str(pip_exe), "install", "-r", "requirements.txt"],
-        cwd=BACKEND_DIR,
-        capture_output=True,
-        text=True
-    )
-    
-    if result.returncode != 0:
-        print(f"  ERROR: Failed to install requirements")
-        error_msg = result.stderr or result.stdout
-        if error_msg:
-            print(f"    {error_msg[:500]}")
-        return False
-    
-    print("  OK: Dependencies installed")
-    return True
-
-
-def setup_frontend():
-    print("\nSetting up Frontend...")
-    
-    node_modules = FRONTEND_DIR / "node_modules"
-    npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
-    
-    if not node_modules.exists():
-        print("  Installing Node.js dependencies...")
-        
-        result = subprocess.run(
-            [npm_cmd, "install"],
-            cwd=FRONTEND_DIR,
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode != 0:
-            print(f"  ERROR: Failed to install npm packages")
-            return False
-        
-        print("  OK: Node modules installed")
-    else:
-        print("  OK: Node modules exist")
-    
-    return True
-
-
 def check_prerequisites():
-    print("\n" + "="*50)
-    print("  HAL - Local AI System Setup")
-    print("="*50)
-    print("Checking system requirements...")
+    """Check if required tools and directories exist"""
+    try:
+        print(f"\n{Colors.BOLD}Checking prerequisites...{Colors.END}\n", flush=True)
+    except:
+        print("\nChecking prerequisites...\n", flush=True)
     
+    warnings = []
     errors = []
     
-    print(f"  OK: Python {sys.version.split()[0]}")
+    def print_ok(msg):
+        try:
+            print(f"  {Colors.GREEN}[OK]{Colors.END} {msg}", flush=True)
+        except:
+            print(f"  [OK] {msg}", flush=True)
     
-    npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
+    def print_warn(msg):
+        try:
+            print(f"  {Colors.YELLOW}[WARN]{Colors.END} {msg}", flush=True)
+        except:
+            print(f"  [WARN] {msg}", flush=True)
+    
+    def print_err(msg):
+        try:
+            print(f"  {Colors.RED}[ERR]{Colors.END} {msg}", flush=True)
+        except:
+            print(f"  [ERR] {msg}", flush=True)
+    
+    # Check directories
+    if not BACKEND_DIR.exists():
+        errors.append(f"Backend directory not found: {BACKEND_DIR}")
+    else:
+        print_ok("Backend directory found")
+    
+    if not FRONTEND_DIR.exists():
+        errors.append(f"Frontend directory not found: {FRONTEND_DIR}")
+    else:
+        print_ok("Frontend directory found")
+    
+    # Check Python
+    print_ok(f"Python: {sys.version.split()[0]}")
+    
+    # Check for venv
+    if VENV_PYTHON.exists():
+        print_ok("Backend venv found")
+    else:
+        print_warn("Python venv not found")
+        warnings.append("Run: cd backend && python -m venv venv && venv\\Scripts\\activate && pip install -r requirements.txt")
+    
+    # Check for node_modules
+    node_modules = FRONTEND_DIR / "node_modules"
+    if node_modules.exists():
+        print_ok("Frontend node_modules found")
+    else:
+        print_warn("node_modules not found")
+        warnings.append("Run: cd frontend && npm install")
+    
+    # Check for npm
     try:
-        result = subprocess.run([npm_cmd, "--version"], capture_output=True, text=True)
+        npm_cmd = "npm.cmd" if os.name == 'nt' else "npm"
+        result = subprocess.run([npm_cmd, "--version"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
-            print(f"  OK: npm {result.stdout.strip()}")
+            print_ok(f"npm: {result.stdout.strip()}")
         else:
-            errors.append("npm not found")
+            errors.append("npm not found. Please install Node.js")
     except FileNotFoundError:
-        errors.append("npm not found - please install Node.js")
+        errors.append("npm not found. Please install Node.js")
+    except Exception as e:
+        errors.append(f"Error checking npm: {e}")
     
-    if BACKEND_DIR.exists():
-        print(f"  OK: Backend directory exists")
-    else:
-        errors.append(f"Backend directory not found")
+    print(flush=True)
     
-    if FRONTEND_DIR.exists():
-        print(f"  OK: Frontend directory exists")
-    else:
-        errors.append(f"Frontend directory not found")
+    # Print warnings
+    for warning in warnings:
+        print_warn(warning)
+        print(flush=True)
     
-    if errors:
-        print("\nErrors found:")
-        for err in errors:
-            print(f"  ERROR: {err}")
-        return False
+    # Print errors
+    for error in errors:
+        print_err(error)
+        print(flush=True)
     
-    return True
+    return len(errors) == 0
 
 
 def main():
+    try:
+        print(f"\n{Colors.BOLD}HAL Startup Script{Colors.END}\n", flush=True)
+    except:
+        print("\nHAL Startup Script\n", flush=True)
+    
+    # Check prerequisites
     if not check_prerequisites():
-        print("\nPlease fix the above errors before starting.")
+        try:
+            print(f"\n{Colors.RED}Please fix the above errors before starting.{Colors.END}", flush=True)
+        except:
+            print("\nPlease fix the above errors before starting.", flush=True)
+        input("\nPress Enter to exit...")
         sys.exit(1)
     
-    if not setup_backend():
-        print("\nBackend setup failed.")
-        sys.exit(1)
-    
-    if not setup_frontend():
-        print("\nFrontend setup failed.")
-        sys.exit(1)
-    
-    print("\nSetup complete! Starting services...\n")
-    
-    global PYTHON_EXE, BACKEND_CMD
-    PYTHON_EXE = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
-    BACKEND_CMD = [PYTHON_EXE, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-    
+    # Create and run
     runner = HALRunner()
     runner.setup()
     
+    # Handle signals
     def signal_handler(sig, frame):
         runner.stop()
         sys.exit(0)
@@ -382,6 +416,7 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # Start and wait
     runner.start()
     runner.wait()
     runner.stop()
