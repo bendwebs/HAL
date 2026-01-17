@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { memories } from '@/lib/api';
 import { 
   Brain, Plus, Trash2, Search, Tag, Edit2, X, Check,
-  Sparkles, Clock, AlertCircle
+  Sparkles, Clock, AlertCircle, RefreshCw
 } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 import toast from 'react-hot-toast';
@@ -46,6 +46,9 @@ export default function MemoriesPage() {
       console.error('Failed to load memories:', err);
       if (err.status === 503) {
         setError('Memory system not available. Please install mem0ai package.');
+      } else if (err.message?.includes('fetch') || err.name === 'TypeError') {
+        // Network error - backend might not be ready
+        setError('Unable to connect to server. Please refresh the page.');
       } else {
         setError('Failed to load memories');
       }
@@ -253,9 +256,18 @@ export default function MemoriesPage() {
 
         {/* Error State */}
         {error && (
-          <div className="mb-6 p-4 bg-error/10 border border-error/20 rounded-lg flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-error" />
-            <p className="text-error">{error}</p>
+          <div className="mb-6 p-4 bg-error/10 border border-error/20 rounded-lg flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-error" />
+              <p className="text-error">{error}</p>
+            </div>
+            <button
+              onClick={loadMemories}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-error/20 hover:bg-error/30 text-error rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Retry
+            </button>
           </div>
         )}
 

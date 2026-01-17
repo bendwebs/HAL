@@ -103,6 +103,7 @@ from app.routers import (
     documents_router, personas_router, memories_router,
     tools_router, alerts_router, admin_router
 )
+from app.routers.tts import router as tts_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -113,6 +114,7 @@ app.include_router(memories_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(tts_router, prefix="/api")
 
 
 # Health check endpoint

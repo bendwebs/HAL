@@ -15,12 +15,15 @@ import {
   AlertCircle,
   Loader2
 } from 'lucide-react';
+import { TTSButton } from './TTSButton';
 
 interface ChatMessageProps {
   message: Message;
   showThinking?: boolean;
   showActions?: boolean;
   isStreaming?: boolean;
+  ttsEnabled?: boolean;
+  ttsVoiceId?: string;
 }
 
 const actionTypeIcons = {
@@ -41,7 +44,9 @@ export default function ChatMessage({
   message, 
   showThinking = true, 
   showActions = true,
-  isStreaming = false 
+  isStreaming = false,
+  ttsEnabled = false,
+  ttsVoiceId
 }: ChatMessageProps) {
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [actionsExpanded, setActionsExpanded] = useState(true);
@@ -158,6 +163,14 @@ export default function ChatMessage({
             <span className="text-xs text-text-muted">
               {message.token_usage.total} tokens
             </span>
+          )}
+          {/* TTS Button for assistant messages */}
+          {!isUser && ttsEnabled && message.content && !isStreaming && (
+            <TTSButton 
+              text={message.content} 
+              voiceId={ttsVoiceId}
+              size="sm"
+            />
           )}
         </div>
       </div>

@@ -31,7 +31,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useAuthStore();
-  const { setSidebarOpen } = useUIStore();
+  const { setSidebarOpen, chatListVersion } = useUIStore();
   const [chatList, setChatList] = useState<ChatListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -39,7 +39,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     loadChats();
-  }, []);
+  }, [chatListVersion]); // Re-fetch when chatListVersion changes
 
   const loadChats = async () => {
     try {

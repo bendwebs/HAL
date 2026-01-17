@@ -256,6 +256,12 @@ export const memories = {
       body: JSON.stringify({ messages, metadata }),
     }),
   
+  confirm: (memoryContents: string[], metadata?: Record<string, any>) =>
+    request<{ saved: number; memories: any[] }>('/api/memories/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ memories: memoryContents, metadata }),
+    }),
+  
   history: (id: string) =>
     request<{ memory_id: string; history: any[] }>(`/api/memories/${id}/history`),
 };
@@ -318,6 +324,31 @@ export const admin = {
 // Models API
 export const models = {
   list: () => request<{ models: any[]; default_chat: string; default_embed: string }>('/api/models'),
+};
+
+// TTS API
+export const tts = {
+  health: () => request<{ status: string; error?: string; default_voice?: string }>('/api/tts/health'),
+  
+  voices: () => request<{ voices: Array<{ id: string; name: string; path: string; source: string }> }>('/api/tts/voices'),
+  
+  generate: async (text: string, voiceId?: string): Promise<Blob> => {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_URL}/api/tts/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ text, voice_id: voiceId, use_cache: true }),
+    });
+    
+    if (!response.ok) {
+      throw new ApiError(response.status, 'Failed to generate speech');
+    }
+    
+    return response.blob();
+  },
 };
 
 export { ApiError };

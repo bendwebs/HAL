@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Chat } from '@/types';
-import { chats as chatsApi } from '@/lib/api';
+import { chats as chatsApi, tts as ttsApi } from '@/lib/api';
+import { useUIStore } from '@/stores/ui';
 import toast from 'react-hot-toast';
 import { 
   MoreVertical, 
@@ -13,7 +14,9 @@ import {
   Users, 
   Globe,
   Check,
-  X
+  X,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -30,17 +33,42 @@ const visibilityIcons = {
 
 export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
   const router = useRouter();
+  const { refreshChatList } = useUIStore();
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(chat.title);
   const [showMenu, setShowMenu] = useState(false);
+  const [ttsAvailable, setTtsAvailable] = useState(false);
+
+  // Check if TTS service is available
+  useEffect(() => {
+    ttsApi.health().then(res => {
+      setTtsAvailable(res.status === 'healthy');
+    }).catch(() => {
+      setTtsAvailable(false);
+    });
+  }, []);
 
   const VisibilityIcon = visibilityIcons[chat.visibility];
+
+  const handleToggleTTS = async () => {
+    try {
+      const updated = await chatsApi.update(chat.id, { 
+        tts_enabled: !chat.tts_enabled 
+      });
+      onUpdate(updated);
+      toast.success(updated.tts_enabled ? 'TTS enabled' : 'TTS disabled');
+    } catch (err) {
+      console.error('Failed to toggle TTS:', err);
+      toast.error('Failed to toggle TTS');
+    }
+  };
 
   const handleSaveTitle = async () => {
     if (title.trim() && title !== chat.title) {
       try {
         const updated = await chatsApi.update(chat.id, { title: title.trim() });
         onUpdate(updated);
+        refreshChatList(); // Update sidebar
         toast.success('Chat renamed');
       } catch (err) {
         console.error('Failed to update title:', err);
@@ -70,6 +98,7 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
               toast.dismiss(t.id);
               try {
                 await chatsApi.delete(chat.id);
+                refreshChatList(); // Update sidebar
                 toast.success('Chat deleted');
                 router.push('/chat');
               } catch (err) {
@@ -159,6 +188,27 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
                       <Edit2 className="w-4 h-4" />
                       Rename
                     </button>
+                    {ttsAvailable && (
+                      <button
+                        onClick={() => {
+                          handleToggleTTS();
+                          setShowMenu(false);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-text-secondary hover:bg-surface flex items-center gap-2"
+                      >
+                        {chat.tts_enabled ? (
+                          <>
+                            <VolumeX className="w-4 h-4" />
+                            Disable TTS
+                          </>
+                        ) : (
+                          <>
+                            <Volume2 className="w-4 h-4" />
+                            Enable TTS
+                          </>
+                        )}
+                      </button>
+                    )}
                     <button
                       onClick={() => {
                         // TODO: Open share modal

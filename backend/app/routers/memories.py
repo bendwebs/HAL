@@ -45,6 +45,12 @@ class SearchRequest(BaseModel):
     limit: int = Field(10, ge=1, le=50)
 
 
+class ConfirmMemoriesRequest(BaseModel):
+    """Request to confirm or reject pending memories"""
+    memories: List[str] = Field(..., description="List of memory contents to save")
+    metadata: Optional[Dict[str, Any]] = None
+
+
 @router.get("", response_model=MemoryListResponse)
 async def list_memories(
     current_user: Dict[str, Any] = Depends(get_current_user),
@@ -69,8 +75,8 @@ async def list_memories(
             MemoryResponse(
                 id=m["id"],
                 content=m["content"],
-                metadata=m.get("metadata", {}),
-                categories=m.get("categories", []),
+                metadata=m.get("metadata") or {},
+                categories=m.get("categories") or [],
                 created_at=m.get("created_at"),
                 updated_at=m.get("updated_at")
             )
@@ -108,8 +114,8 @@ async def create_memory(
         return MemoryResponse(
             id=mem.get("id", ""),
             content=mem.get("memory", memory_data.content),
-            metadata=mem.get("metadata", {}),
-            categories=mem.get("categories", []),
+            metadata=mem.get("metadata") or {},
+            categories=mem.get("categories") or [],
             created_at=mem.get("created_at")
         )
     
@@ -199,8 +205,8 @@ async def get_memory(
     return MemoryResponse(
         id=memory["id"],
         content=memory["content"],
-        metadata=memory.get("metadata", {}),
-        categories=memory.get("categories", []),
+        metadata=memory.get("metadata") or {},
+        categories=memory.get("categories") or [],
         created_at=memory.get("created_at"),
         updated_at=memory.get("updated_at")
     )
@@ -229,8 +235,8 @@ async def update_memory(
         return MemoryResponse(
             id=memory["id"],
             content=memory["content"],
-            metadata=memory.get("metadata", {}),
-            categories=memory.get("categories", []),
+            metadata=memory.get("metadata") or {},
+            categories=memory.get("categories") or [],
             created_at=memory.get("created_at"),
             updated_at=memory.get("updated_at")
         )
@@ -281,3 +287,45 @@ async def get_memory_history(
     
     history = memory_system.get_history(memory_id)
     return {"memory_id": memory_id, "history": history}
+
+
+@router.post("/confirm", status_code=status.HTTP_201_CREATED)
+async def confirm_memories(
+    data: ConfirmMemoriesRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Confirm and save user-approved memories
+    
+    This endpoint saves memories that the user has explicitly approved.
+    """
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    print(f"[DEBUG] Confirming {len(data.memories)} memories for user {current_user['_id']}")
+    
+    saved_memories = []
+    for content in data.memories:
+        if content.strip():
+            print(f"[DEBUG] Saving memory: {content[:50]}...")
+            result = await memory_system.add_memory(
+                user_id=current_user["_id"],
+                content=content.strip(),
+                metadata=data.metadata
+            )
+            print(f"[DEBUG] Add memory result: {result}")
+            if result:
+                memories = result.get("results", [])
+                for m in memories:
+                    saved_memories.append({
+                        "id": m.get("id", ""),
+                        "content": m.get("memory", content),
+                        "event": m.get("event", "ADD")
+                    })
+    
+    print(f"[DEBUG] Saved {len(saved_memories)} memories")
+    return {
+        "saved": len(saved_memories),
+        "memories": saved_memories
+    }

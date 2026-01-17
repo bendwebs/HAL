@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { chats as chatsApi } from '@/lib/api';
+import { useUIStore } from '@/stores/ui';
 import { ChatListItem } from '@/types';
 import { Plus, MessageSquare, Lock, Users, Globe, Trash2, CheckSquare, Square, X } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
@@ -16,6 +17,7 @@ const visibilityIcons = {
 
 export default function ChatListPage() {
   const router = useRouter();
+  const { refreshChatList } = useUIStore();
   const [chatList, setChatList] = useState<ChatListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -90,6 +92,7 @@ export default function ChatListPage() {
                 );
                 setChatList(chatList.filter(c => !selectedIds.has(c.id)));
                 clearSelection();
+                refreshChatList(); // Trigger sidebar refresh
                 toast.success(`Deleted ${selectedIds.size} chat(s)`);
               } catch (err) {
                 console.error('Failed to delete chats:', err);

@@ -2,14 +2,15 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { chats as chatsApi, messages as messagesApi } from '@/lib/api';
+import { chats as chatsApi, messages as messagesApi, memories as memoriesApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { useUIStore } from '@/stores/ui';
 import { Chat, Message, StreamChunk } from '@/types';
 import ChatMessage from '@/components/chat/ChatMessage';
 import ChatInput from '@/components/chat/ChatInput';
 import ChatHeader from '@/components/chat/ChatHeader';
-import { Loader2, Brain, Sparkles, X } from 'lucide-react';
+import { Loader2, Brain, Sparkles, X, Check, Trash2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function ChatPage() {
   const params = useParams();
@@ -17,7 +18,7 @@ export default function ChatPage() {
   const chatId = params.id as string;
   
   const { user } = useAuthStore();
-  const { showThinking, showActions } = useUIStore();
+  const { showThinking, showActions, refreshChatList } = useUIStore();
   
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -25,7 +26,8 @@ export default function ChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<Partial<Message> | null>(null);
   const [memoriesUsed, setMemoriesUsed] = useState<any[]>([]);
-  const [memoriesExtracted, setMemoriesExtracted] = useState<any[]>([]);
+  const [pendingMemories, setPendingMemories] = useState<string[]>([]);
+  const [isSavingMemories, setIsSavingMemories] = useState(false);
   const streamingMessageRef = useRef<Partial<Message> | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -95,7 +97,7 @@ export default function ChatPage() {
     streamingMessageRef.current = initialStreamingMsg;
     setStreamingMessage(initialStreamingMsg);
     setMemoriesUsed([]);
-    setMemoriesExtracted([]);
+    setPendingMemories([]);
 
     try {
       for await (const chunk of messagesApi.sendStream(chatId, content, documentIds)) {
@@ -158,14 +160,23 @@ export default function ChatPage() {
         setMessages(msgs => [...msgs, finalMessage]);
         break;
       
+      case 'title_updated':
+        // Chat title was auto-generated
+        if (chunk.data.title) {
+          setChat(prev => prev ? { ...prev, title: chunk.data.title } : null);
+          refreshChatList(); // Update sidebar
+        }
+        break;
+      
       case 'memories_used':
         // Memories that were used to generate this response
         setMemoriesUsed(chunk.data.memories || []);
         break;
       
-      case 'memories_extracted':
-        // New memories extracted from this conversation
-        setMemoriesExtracted(chunk.data.memories || []);
+      case 'memories_pending':
+        // Potential memories extracted - need user confirmation
+        console.log('[DEBUG] Received memories_pending:', chunk.data);
+        setPendingMemories(chunk.data.memories || []);
         break;
         
       case 'error':
@@ -218,6 +229,8 @@ export default function ChatPage() {
               message={message}
               showThinking={showThinking}
               showActions={showActions}
+              ttsEnabled={chat.tts_enabled}
+              ttsVoiceId={chat.tts_voice_id || undefined}
             />
           ))}
           
@@ -227,6 +240,8 @@ export default function ChatPage() {
               showThinking={showThinking}
               showActions={showActions}
               isStreaming
+              ttsEnabled={chat.tts_enabled}
+              ttsVoiceId={chat.tts_voice_id || undefined}
             />
           )}
           
@@ -262,29 +277,62 @@ export default function ChatPage() {
             </div>
           )}
           
-          {/* Memory Extraction Indicator */}
-          {memoriesExtracted.length > 0 && !isSending && (
+          {/* Pending Memories Confirmation */}
+          {pendingMemories.length > 0 && !isSending && (
             <div className="max-w-3xl mx-auto">
-              <div className="flex items-start gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
-                <Sparkles className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-green-300 font-medium mb-1">
-                    Learned {memoriesExtracted.length} new things
-                  </p>
-                  <div className="space-y-1">
-                    {memoriesExtracted.map((m, i) => (
-                      <p key={i} className="text-xs text-text-muted truncate">
-                        • {m.content}
-                      </p>
-                    ))}
+              <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <Sparkles className="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm text-amber-300 font-medium mb-2">
+                      Should I remember this?
+                    </p>
+                    <div className="space-y-2 mb-3">
+                      {pendingMemories.map((memory, i) => (
+                        <div key={i} className="flex items-start gap-2 p-2 bg-bg-secondary/50 rounded">
+                          <p className="text-sm text-text-primary flex-1">{memory}</p>
+                          <button
+                            onClick={() => setPendingMemories(prev => prev.filter((_, idx) => idx !== i))}
+                            className="p-1 text-text-muted hover:text-error"
+                            title="Remove this memory"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          setIsSavingMemories(true);
+                          try {
+                            await memoriesApi.confirm(pendingMemories, { chat_id: chatId });
+                            toast.success(`Saved ${pendingMemories.length} memories`);
+                            setPendingMemories([]);
+                          } catch (err) {
+                            console.error('Failed to save memories:', err);
+                            toast.error('Failed to save memories');
+                          } finally {
+                            setIsSavingMemories(false);
+                          }
+                        }}
+                        disabled={isSavingMemories}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-sm rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        {isSavingMemories ? 'Saving...' : 'Yes, Remember'}
+                      </button>
+                      <button
+                        onClick={() => setPendingMemories([])}
+                        disabled={isSavingMemories}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:bg-surface-hover text-text-secondary text-sm rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        No, Skip
+                      </button>
+                    </div>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setMemoriesExtracted([])}
-                  className="p-1 text-text-muted hover:text-text-primary"
-                >
-                  <X className="w-3 h-3" />
-                </button>
               </div>
             </div>
           )}
