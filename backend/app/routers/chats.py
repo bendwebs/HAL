@@ -119,6 +119,7 @@ async def create_chat(
         "model_override": chat_data.model_override,
         "tts_enabled": chat_data.tts_enabled,
         "tts_voice_id": chat_data.tts_voice_id,
+        "voice_mode": chat_data.voice_mode,
         "visibility": ChatVisibility.PRIVATE,
         "shared_with": [],
         "share_includes_history": True,
@@ -137,6 +138,7 @@ async def create_chat(
         model_override=chat_doc["model_override"],
         tts_enabled=chat_doc["tts_enabled"],
         tts_voice_id=chat_doc["tts_voice_id"],
+        voice_mode=chat_doc.get("voice_mode", False),
         visibility=chat_doc["visibility"],
         shared_with=[],
         share_includes_history=True,
@@ -219,6 +221,8 @@ async def update_chat(
         updates["tts_enabled"] = update.tts_enabled
     if update.tts_voice_id is not None:
         updates["tts_voice_id"] = update.tts_voice_id
+    if update.voice_mode is not None:
+        updates["voice_mode"] = update.voice_mode
     
     await database.chats.update_one(
         {"_id": ObjectId(chat_id)},
@@ -244,6 +248,50 @@ async def delete_chat(
     
     # Delete chat
     await database.chats.delete_one({"_id": ObjectId(chat_id)})
+
+
+@router.delete("/bulk/delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_chats(
+    title_filter: Optional[str] = Query(None, description="Delete chats matching this title"),
+    delete_empty_only: bool = Query(True, description="Only delete chats with 0 messages"),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Bulk delete chats (owner only, with safety filters)"""
+    user_id = current_user["_id"]
+    
+    # Build query - only user's own chats
+    query = {"user_id": ObjectId(user_id)}
+    
+    if title_filter:
+        query["title"] = title_filter
+    
+    # Get matching chats
+    chats_cursor = database.chats.find(query)
+    chats = await chats_cursor.to_list(10000)
+    
+    deleted_count = 0
+    skipped_count = 0
+    
+    for chat in chats:
+        chat_id = chat["_id"]
+        
+        # Check message count if delete_empty_only
+        if delete_empty_only:
+            msg_count = await database.messages.count_documents({"chat_id": chat_id})
+            if msg_count > 0:
+                skipped_count += 1
+                continue
+        
+        # Delete messages and chat
+        await database.messages.delete_many({"chat_id": chat_id})
+        await database.chats.delete_one({"_id": chat_id})
+        deleted_count += 1
+    
+    return {
+        "deleted": deleted_count,
+        "skipped": skipped_count,
+        "message": f"Deleted {deleted_count} chats" + (f", skipped {skipped_count} with messages" if skipped_count else "")
+    }
 
 
 @router.post("/{chat_id}/share", response_model=ChatResponse)
