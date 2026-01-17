@@ -54,6 +54,10 @@ coverage/
 .coverage
 htmlcov/
 .pytest_cache/
+backend/test_*.py
+
+# External repos
+index-tts/
 
 # Type checking
 .mypy_cache/

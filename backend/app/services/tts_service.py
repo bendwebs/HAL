@@ -78,16 +78,22 @@ class IndexTTSService:
         if os.path.exists(VOICE_SAMPLES_PATH):
             for f in os.listdir(VOICE_SAMPLES_PATH):
                 if f.endswith(('.wav', '.mp3', '.flac')):
-                    self.default_voice = os.path.join(VOICE_SAMPLES_PATH, f)
-                    return
+                    voice_file = os.path.join(VOICE_SAMPLES_PATH, f)
+                    # Skip small files (likely LFS stubs)
+                    if os.path.getsize(voice_file) > 1000:
+                        self.default_voice = voice_file
+                        return
         
         # Fall back to IndexTTS examples
         examples_path = os.path.join(INDEXTTS_PATH, "examples")
         if os.path.exists(examples_path):
             for f in os.listdir(examples_path):
                 if f.startswith("voice_") and f.endswith(".wav"):
-                    self.default_voice = os.path.join(examples_path, f)
-                    return
+                    voice_file = os.path.join(examples_path, f)
+                    # Skip small files (likely LFS stubs)
+                    if os.path.getsize(voice_file) > 1000:
+                        self.default_voice = voice_file
+                        return
     
     def get_cache_path(self, text: str, voice_id: str) -> str:
         """Generate a cache path for the given text and voice"""
