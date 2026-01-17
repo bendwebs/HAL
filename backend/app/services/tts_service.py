@@ -14,10 +14,13 @@ from typing import Optional
 from datetime import datetime
 
 # Configuration
-INDEXTTS_PATH = os.environ.get("INDEXTTS_PATH", "E:\\Coding\\index-tts")
+# Default path is inside HAL folder (E:\Coding\Hal\index-tts)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+HAL_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR)))
+INDEXTTS_PATH = os.environ.get("INDEXTTS_PATH", os.path.join(HAL_ROOT, "index-tts"))
 CHECKPOINTS_PATH = os.path.join(INDEXTTS_PATH, "checkpoints")
-VOICE_SAMPLES_PATH = os.environ.get("HAL_VOICE_SAMPLES", "E:\\Coding\\Hal\\backend\\data\\voices")
-TTS_CACHE_PATH = os.environ.get("HAL_TTS_CACHE", "E:\\Coding\\Hal\\backend\\data\\tts_cache")
+VOICE_SAMPLES_PATH = os.environ.get("HAL_VOICE_SAMPLES", os.path.join(HAL_ROOT, "backend", "data", "voices"))
+TTS_CACHE_PATH = os.environ.get("HAL_TTS_CACHE", os.path.join(HAL_ROOT, "backend", "data", "tts_cache"))
 
 # Ensure directories exist
 os.makedirs(VOICE_SAMPLES_PATH, exist_ok=True)

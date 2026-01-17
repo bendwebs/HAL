@@ -24,7 +24,7 @@ BACKEND_DIR = BASE_DIR / "backend"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 # TTS Configuration
-INDEXTTS_DIR = Path(os.environ.get("INDEXTTS_PATH", "E:\\Coding\\index-tts"))
+INDEXTTS_DIR = Path(os.environ.get("INDEXTTS_PATH", str(BASE_DIR / "index-tts")))
 TTS_SERVICE_FILE = BACKEND_DIR / "app" / "services" / "tts_service.py"
 ENABLE_TTS = os.environ.get("HAL_ENABLE_TTS", "1").lower() in ("1", "true", "yes")
 
