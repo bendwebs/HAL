@@ -523,7 +523,7 @@ export default function ConversePage() {
 }
 
 
-// Glowing Ring Component - inspired by first image
+// Glowing Ring Component - highly dynamic audio visualization
 function GlowingRing({ 
   audioLevel, 
   isActive, 
@@ -541,6 +541,8 @@ function GlowingRing({
   const animationRef = useRef<number>(0);
   const phaseRef = useRef(0);
   const smoothedLevelRef = useRef(0);
+  const historyRef = useRef<number[]>(new Array(60).fill(0));
+  const peakRef = useRef(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -549,97 +551,168 @@ function GlowingRing({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const size = 280;
+    const size = 320;
     canvas.width = size;
     canvas.height = size;
     
     const centerX = size / 2;
     const centerY = size / 2;
-    const baseRadius = 90;
+    const baseRadius = 80;
 
     const draw = () => {
       ctx.clearRect(0, 0, size, size);
       
-      // Smooth audio level
-      smoothedLevelRef.current += (audioLevel - smoothedLevelRef.current) * 0.15;
+      // Faster audio response for more dynamic feel
+      smoothedLevelRef.current += (audioLevel - smoothedLevelRef.current) * 0.3;
       const level = smoothedLevelRef.current;
       
-      // Determine colors based on state
-      let primaryColor = 'rgba(139, 92, 246, '; // purple
-      let secondaryColor = 'rgba(79, 70, 229, '; // indigo
-      let glowColor = 'rgba(139, 92, 246, ';
+      // Track peak for extra punch
+      if (level > peakRef.current) {
+        peakRef.current = level;
+      } else {
+        peakRef.current *= 0.95;
+      }
+      
+      // Update history for trailing effect
+      historyRef.current.push(level);
+      historyRef.current.shift();
+      
+      // Color schemes
+      let hue1 = 270; // purple
+      let hue2 = 280;
       
       if (isListening) {
-        primaryColor = 'rgba(6, 182, 212, '; // cyan
-        secondaryColor = 'rgba(139, 92, 246, '; // purple
-        glowColor = 'rgba(6, 182, 212, ';
+        hue1 = 185; // cyan
+        hue2 = 270; // to purple
       } else if (isAI) {
-        primaryColor = 'rgba(168, 85, 247, '; // purple
-        secondaryColor = 'rgba(236, 72, 153, '; // pink
-        glowColor = 'rgba(168, 85, 247, ';
+        hue1 = 280; // purple
+        hue2 = 330; // to pink
       }
 
-      // Outer glow layers
-      const glowLayers = 4;
-      for (let i = glowLayers; i >= 0; i--) {
-        const glowRadius = baseRadius + 20 + i * 15 + level * 30;
-        const alpha = (0.03 + level * 0.05) * (1 - i / glowLayers);
+      // Dynamic outer glow - pulses with audio
+      const glowIntensity = 0.15 + level * 0.4 + peakRef.current * 0.2;
+      for (let i = 5; i >= 0; i--) {
+        const glowRadius = baseRadius + 30 + i * 20 + level * 40;
+        const alpha = glowIntensity * (1 - i / 6) * 0.4;
+        
+        const gradient = ctx.createRadialGradient(
+          centerX, centerY, baseRadius,
+          centerX, centerY, glowRadius
+        );
+        gradient.addColorStop(0, `hsla(${hue1}, 80%, 60%, ${alpha})`);
+        gradient.addColorStop(1, `hsla(${hue2}, 80%, 50%, 0)`);
         
         ctx.beginPath();
         ctx.arc(centerX, centerY, glowRadius, 0, Math.PI * 2);
-        ctx.fillStyle = glowColor + alpha + ')';
+        ctx.fillStyle = gradient;
         ctx.fill();
       }
 
-      // Main ring with gradient
-      const ringWidth = 4 + level * 6;
-      const ringRadius = baseRadius + level * 15;
+      // Animated wave ring - the main visual
+      const segments = 120;
+      const ringRadius = baseRadius + 10 + level * 25;
       
-      // Create gradient for ring
-      const gradient = ctx.createLinearGradient(
-        centerX - ringRadius, centerY - ringRadius,
-        centerX + ringRadius, centerY + ringRadius
-      );
-      gradient.addColorStop(0, primaryColor + '0.9)');
-      gradient.addColorStop(0.5, secondaryColor + '0.9)');
-      gradient.addColorStop(1, primaryColor + '0.9)');
-
       ctx.beginPath();
-      ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = gradient;
-      ctx.lineWidth = ringWidth;
+      for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * Math.PI * 2;
+        
+        // Multiple wave frequencies for organic feel
+        const wave1 = Math.sin(angle * 8 + phaseRef.current * 3) * (8 + level * 20);
+        const wave2 = Math.sin(angle * 4 - phaseRef.current * 2) * (4 + level * 12);
+        const wave3 = Math.sin(angle * 12 + phaseRef.current * 5) * (level * 8);
+        
+        // Audio-reactive amplitude
+        const historyIndex = Math.floor((i / segments) * historyRef.current.length);
+        const historyLevel = historyRef.current[historyIndex] || 0;
+        const audioWave = historyLevel * 30;
+        
+        const totalWave = (isActive || isProcessing) 
+          ? wave1 + wave2 + wave3 + audioWave 
+          : wave1 * 0.3;
+        
+        const r = ringRadius + totalWave;
+        const x = centerX + Math.cos(angle) * r;
+        const y = centerY + Math.sin(angle) * r;
+        
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      
+      // Gradient stroke for the wave ring
+      const ringGradient = ctx.createLinearGradient(
+        centerX - ringRadius - 50, centerY - ringRadius - 50,
+        centerX + ringRadius + 50, centerY + ringRadius + 50
+      );
+      ringGradient.addColorStop(0, `hsla(${hue1}, 85%, 65%, 0.9)`);
+      ringGradient.addColorStop(0.5, `hsla(${(hue1 + hue2) / 2}, 80%, 60%, 1)`);
+      ringGradient.addColorStop(1, `hsla(${hue2}, 85%, 55%, 0.9)`);
+      
+      ctx.strokeStyle = ringGradient;
+      ctx.lineWidth = 3 + level * 4;
       ctx.stroke();
+      
+      // Fill with subtle gradient
+      const fillGradient = ctx.createRadialGradient(
+        centerX, centerY, 0,
+        centerX, centerY, ringRadius + 40
+      );
+      fillGradient.addColorStop(0, `hsla(${hue1}, 70%, 20%, ${0.1 + level * 0.15})`);
+      fillGradient.addColorStop(0.7, `hsla(${hue2}, 70%, 15%, ${0.05 + level * 0.1})`);
+      fillGradient.addColorStop(1, 'transparent');
+      ctx.fillStyle = fillGradient;
+      ctx.fill();
 
-      // Animated particles/dots around ring when active
+      // Energy particles that respond to audio
       if (isActive || isProcessing) {
-        const particleCount = isProcessing ? 8 : 16;
-        const particleSpeed = isProcessing ? 2 : 1;
+        const particleCount = Math.floor(12 + level * 20);
         
         for (let i = 0; i < particleCount; i++) {
-          const angle = (i / particleCount) * Math.PI * 2 + phaseRef.current * particleSpeed;
-          const particleRadius = ringRadius + 15 + Math.sin(angle * 3 + phaseRef.current * 2) * (5 + level * 10);
+          const angle = (i / particleCount) * Math.PI * 2 + phaseRef.current * (isProcessing ? 2 : 0.5);
+          const distance = ringRadius + 20 + Math.sin(angle * 3 + phaseRef.current * 4) * (15 + level * 25);
+          const extraDist = historyRef.current[i % historyRef.current.length] * 40;
           
-          const x = centerX + Math.cos(angle) * particleRadius;
-          const y = centerY + Math.sin(angle) * particleRadius;
+          const x = centerX + Math.cos(angle) * (distance + extraDist);
+          const y = centerY + Math.sin(angle) * (distance + extraDist);
           
-          const particleSize = 2 + level * 3 + Math.sin(phaseRef.current * 3 + i) * 1;
-          const particleAlpha = 0.4 + level * 0.4 + Math.sin(phaseRef.current * 2 + i * 0.5) * 0.2;
+          const particleSize = 1.5 + level * 3 + Math.sin(phaseRef.current * 4 + i) * 1.5;
+          const alpha = 0.3 + level * 0.5;
           
           ctx.beginPath();
           ctx.arc(x, y, particleSize, 0, Math.PI * 2);
-          ctx.fillStyle = primaryColor + particleAlpha + ')';
+          ctx.fillStyle = `hsla(${hue1 + (i * 3)}, 80%, 70%, ${alpha})`;
           ctx.fill();
+          
+          // Particle trail
+          if (level > 0.1) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            const trailX = centerX + Math.cos(angle) * (distance - 10);
+            const trailY = centerY + Math.sin(angle) * (distance - 10);
+            ctx.lineTo(trailX, trailY);
+            ctx.strokeStyle = `hsla(${hue1 + (i * 3)}, 80%, 70%, ${alpha * 0.3})`;
+            ctx.lineWidth = particleSize * 0.5;
+            ctx.stroke();
+          }
         }
       }
 
-      // Inner subtle ring
+      // Inner pulsing core
+      const coreRadius = 25 + level * 15 + Math.sin(phaseRef.current * 2) * 5;
+      const coreGradient = ctx.createRadialGradient(
+        centerX, centerY, 0,
+        centerX, centerY, coreRadius
+      );
+      coreGradient.addColorStop(0, `hsla(${hue1}, 70%, 80%, ${0.3 + level * 0.4})`);
+      coreGradient.addColorStop(0.5, `hsla(${hue2}, 70%, 60%, ${0.2 + level * 0.3})`);
+      coreGradient.addColorStop(1, 'transparent');
+      
       ctx.beginPath();
-      ctx.arc(centerX, centerY, baseRadius - 20, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      ctx.arc(centerX, centerY, coreRadius, 0, Math.PI * 2);
+      ctx.fillStyle = coreGradient;
+      ctx.fill();
 
-      phaseRef.current += 0.02;
+      phaseRef.current += 0.025 + level * 0.02;
       animationRef.current = requestAnimationFrame(draw);
     };
 
@@ -651,14 +724,14 @@ function GlowingRing({
     <div className="relative cursor-pointer group">
       <canvas 
         ref={canvasRef} 
-        className="w-[280px] h-[280px] transition-transform group-hover:scale-105 group-active:scale-95"
+        className="w-[320px] h-[320px] transition-transform group-hover:scale-105 group-active:scale-95"
       />
     </div>
   );
 }
 
 
-// Waveform Visualizer Component - inspired by second image
+// Waveform Visualizer Component - flowing audio-reactive waves
 function WaveformVisualizer({ 
   frequencyData, 
   isActive,
@@ -672,6 +745,7 @@ function WaveformVisualizer({
   const animationRef = useRef<number>(0);
   const phaseRef = useRef(0);
   const smoothedDataRef = useRef<number[]>(new Array(64).fill(0));
+  const velocityRef = useRef<number[]>(new Array(64).fill(0));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -680,111 +754,149 @@ function WaveformVisualizer({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = 500;
-    const height = 120;
+    const width = 600;
+    const height = 150;
     canvas.width = width;
     canvas.height = height;
 
     const draw = () => {
       ctx.clearRect(0, 0, width, height);
       
-      // Smooth the frequency data
+      // Smooth with spring physics for bouncy feel
       for (let i = 0; i < smoothedDataRef.current.length; i++) {
         const target = frequencyData[i] || 0;
-        smoothedDataRef.current[i] += (target - smoothedDataRef.current[i]) * 0.2;
+        const current = smoothedDataRef.current[i];
+        const diff = target - current;
+        
+        velocityRef.current[i] += diff * 0.3;
+        velocityRef.current[i] *= 0.7; // damping
+        smoothedDataRef.current[i] += velocityRef.current[i];
       }
       
       const data = smoothedDataRef.current;
       const centerY = height / 2;
+      const avgLevel = data.reduce((a, b) => a + b, 0) / data.length;
       
-      // Determine colors
-      let color1 = isAI ? 'rgba(168, 85, 247, ' : 'rgba(6, 182, 212, '; // purple or cyan
-      let color2 = isAI ? 'rgba(236, 72, 153, ' : 'rgba(139, 92, 246, '; // pink or purple
+      // Colors
+      const hue1 = isAI ? 280 : 185;
+      const hue2 = isAI ? 330 : 270;
 
-      // Create flowing wave effect
-      const points: { x: number; y: number }[] = [];
-      const segments = 64;
+      // Draw multiple wave layers for depth
+      for (let layer = 2; layer >= 0; layer--) {
+        const layerOffset = layer * 0.3;
+        const layerAlpha = 0.15 + (2 - layer) * 0.25;
+        const layerScale = 0.6 + (2 - layer) * 0.2;
+        
+        const points: { x: number; y: number }[] = [];
+        const segments = 80;
+        
+        for (let i = 0; i <= segments; i++) {
+          const x = (i / segments) * width;
+          const dataIndex = Math.floor((i / segments) * data.length);
+          
+          // Get surrounding data for smoother interpolation
+          const d0 = data[Math.max(0, dataIndex - 1)] || 0;
+          const d1 = data[dataIndex] || 0;
+          const d2 = data[Math.min(data.length - 1, dataIndex + 1)] || 0;
+          const interpolated = (d0 + d1 * 2 + d2) / 4;
+          
+          const amplitude = interpolated * 50 * layerScale;
+          
+          // Flowing wave motion
+          const wave1 = Math.sin(i * 0.12 + phaseRef.current * 2 + layerOffset) * (6 + avgLevel * 15);
+          const wave2 = Math.sin(i * 0.06 + phaseRef.current * 1.3 - layerOffset) * (10 + avgLevel * 20);
+          const wave3 = Math.sin(i * 0.2 + phaseRef.current * 3 + layer) * (avgLevel * 10);
+          
+          const totalY = isActive 
+            ? amplitude + wave1 + wave2 + wave3
+            : wave1 * 0.4 + wave2 * 0.3;
+          
+          points.push({ x, y: centerY - totalY });
+        }
+
+        // Create smooth curve through points
+        ctx.beginPath();
+        ctx.moveTo(0, centerY);
+        
+        // Bezier curve for smoothness
+        for (let i = 0; i < points.length - 1; i++) {
+          const p0 = points[Math.max(0, i - 1)];
+          const p1 = points[i];
+          const p2 = points[i + 1];
+          const p3 = points[Math.min(points.length - 1, i + 2)];
+          
+          const cp1x = p1.x + (p2.x - p0.x) / 6;
+          const cp1y = p1.y + (p2.y - p0.y) / 6;
+          const cp2x = p2.x - (p3.x - p1.x) / 6;
+          const cp2y = p2.y - (p3.y - p1.y) / 6;
+          
+          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+        }
+        
+        ctx.lineTo(width, centerY);
+        ctx.closePath();
+        
+        // Gradient fill
+        const fillGradient = ctx.createLinearGradient(0, centerY - 60, 0, centerY);
+        fillGradient.addColorStop(0, `hsla(${hue1}, 80%, 60%, ${layerAlpha * 0.5})`);
+        fillGradient.addColorStop(1, `hsla(${hue2}, 80%, 50%, ${layerAlpha * 0.1})`);
+        ctx.fillStyle = fillGradient;
+        ctx.fill();
+        
+        // Stroke
+        const strokeGradient = ctx.createLinearGradient(0, 0, width, 0);
+        strokeGradient.addColorStop(0, `hsla(${hue1}, 85%, 65%, ${layerAlpha * 0.5})`);
+        strokeGradient.addColorStop(0.5, `hsla(${(hue1 + hue2) / 2}, 85%, 70%, ${layerAlpha})`);
+        strokeGradient.addColorStop(1, `hsla(${hue2}, 85%, 65%, ${layerAlpha * 0.5})`);
+        ctx.strokeStyle = strokeGradient;
+        ctx.lineWidth = 2 - layer * 0.5;
+        ctx.stroke();
+        
+        // Mirror bottom wave
+        ctx.beginPath();
+        ctx.moveTo(0, centerY);
+        for (let i = 0; i < points.length - 1; i++) {
+          const p0 = points[Math.max(0, i - 1)];
+          const p1 = points[i];
+          const p2 = points[i + 1];
+          const p3 = points[Math.min(points.length - 1, i + 2)];
+          
+          const mirrorY = (y: number) => centerY + (centerY - y);
+          
+          const cp1x = p1.x + (p2.x - p0.x) / 6;
+          const cp1y = mirrorY(p1.y + (p2.y - p0.y) / 6);
+          const cp2x = p2.x - (p3.x - p1.x) / 6;
+          const cp2y = mirrorY(p2.y - (p3.y - p1.y) / 6);
+          
+          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, mirrorY(p2.y));
+        }
+        ctx.lineTo(width, centerY);
+        ctx.closePath();
+        
+        // Mirrored gradient (flip colors)
+        const mirrorFillGradient = ctx.createLinearGradient(0, centerY, 0, centerY + 60);
+        mirrorFillGradient.addColorStop(0, `hsla(${hue2}, 80%, 50%, ${layerAlpha * 0.1})`);
+        mirrorFillGradient.addColorStop(1, `hsla(${hue1}, 80%, 60%, ${layerAlpha * 0.5})`);
+        ctx.fillStyle = mirrorFillGradient;
+        ctx.fill();
+        ctx.strokeStyle = strokeGradient;
+        ctx.stroke();
+      }
+
+      // Center glow line
+      const glowGradient = ctx.createLinearGradient(0, 0, width, 0);
+      glowGradient.addColorStop(0, `hsla(${hue1}, 70%, 70%, 0)`);
+      glowGradient.addColorStop(0.5, `hsla(${hue2}, 70%, 80%, ${0.3 + avgLevel * 0.4})`);
+      glowGradient.addColorStop(1, `hsla(${hue1}, 70%, 70%, 0)`);
       
-      for (let i = 0; i <= segments; i++) {
-        const x = (i / segments) * width;
-        const dataIndex = Math.floor((i / segments) * data.length);
-        const amplitude = (data[dataIndex] || 0) * 40;
-        
-        // Add wave motion
-        const wave1 = Math.sin(i * 0.15 + phaseRef.current * 2) * 5;
-        const wave2 = Math.sin(i * 0.08 + phaseRef.current * 1.5) * 8;
-        
-        const baseAmplitude = isActive ? amplitude + wave1 + wave2 : wave1 * 0.3;
-        
-        points.push({ x, y: centerY - baseAmplitude });
-      }
-
-      // Draw gradient fill for upper wave
-      const gradient = ctx.createLinearGradient(0, 0, width, 0);
-      gradient.addColorStop(0, color1 + '0.1)');
-      gradient.addColorStop(0.3, color2 + '0.3)');
-      gradient.addColorStop(0.5, color1 + '0.4)');
-      gradient.addColorStop(0.7, color2 + '0.3)');
-      gradient.addColorStop(1, color1 + '0.1)');
-
-      // Upper wave fill
-      ctx.beginPath();
-      ctx.moveTo(0, centerY);
-      points.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.lineTo(width, centerY);
-      ctx.closePath();
-      ctx.fillStyle = gradient;
-      ctx.fill();
-
-      // Lower wave (mirrored)
-      ctx.beginPath();
-      ctx.moveTo(0, centerY);
-      points.forEach(p => ctx.lineTo(p.x, centerY + (centerY - p.y)));
-      ctx.lineTo(width, centerY);
-      ctx.closePath();
-      ctx.fillStyle = gradient;
-      ctx.fill();
-
-      // Draw the main wave lines
-      const lineGradient = ctx.createLinearGradient(0, 0, width, 0);
-      lineGradient.addColorStop(0, color1 + '0.3)');
-      lineGradient.addColorStop(0.5, color2 + '0.8)');
-      lineGradient.addColorStop(1, color1 + '0.3)');
-
-      // Upper line
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) {
-        const xc = (points[i].x + points[i - 1].x) / 2;
-        const yc = (points[i].y + points[i - 1].y) / 2;
-        ctx.quadraticCurveTo(points[i - 1].x, points[i - 1].y, xc, yc);
-      }
-      ctx.strokeStyle = lineGradient;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Lower line (mirrored)
-      ctx.beginPath();
-      const mirroredPoints = points.map(p => ({ x: p.x, y: centerY + (centerY - p.y) }));
-      ctx.moveTo(mirroredPoints[0].x, mirroredPoints[0].y);
-      for (let i = 1; i < mirroredPoints.length; i++) {
-        const xc = (mirroredPoints[i].x + mirroredPoints[i - 1].x) / 2;
-        const yc = (mirroredPoints[i].y + mirroredPoints[i - 1].y) / 2;
-        ctx.quadraticCurveTo(mirroredPoints[i - 1].x, mirroredPoints[i - 1].y, xc, yc);
-      }
-      ctx.strokeStyle = lineGradient;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Center line
       ctx.beginPath();
       ctx.moveTo(0, centerY);
       ctx.lineTo(width, centerY);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = glowGradient;
+      ctx.lineWidth = 1 + avgLevel * 2;
       ctx.stroke();
 
-      phaseRef.current += 0.03;
+      phaseRef.current += 0.025;
       animationRef.current = requestAnimationFrame(draw);
     };
 
@@ -795,7 +907,7 @@ function WaveformVisualizer({
   return (
     <canvas 
       ref={canvasRef} 
-      className="w-full h-[120px] opacity-80"
+      className="w-full h-[150px]"
     />
   );
 }

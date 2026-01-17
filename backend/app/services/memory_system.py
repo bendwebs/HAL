@@ -232,6 +232,96 @@ class MemorySystem:
             print(f"Error getting memory history: {e}")
             return []
 
+    async def find_duplicates(self, user_id: str, threshold: float = 0.85) -> Dict[str, Any]:
+        """Find duplicate/similar memories using semantic similarity
+        
+        Returns groups of similar memories that could be consolidated.
+        """
+        if not self.is_available:
+            return {"groups": [], "total_duplicates": 0}
+        
+        try:
+            # Get all memories
+            all_memories = await self.get_all_memories(user_id, limit=500)
+            
+            if len(all_memories) < 2:
+                return {"groups": [], "total_duplicates": 0}
+            
+            # Get embeddings for all memories
+            embeddings = []
+            for mem in all_memories:
+                emb = self._memory.embedding_model.embed(mem["content"])
+                embeddings.append(emb)
+            
+            # Find similar pairs using cosine similarity
+            import numpy as np
+            
+            def cosine_similarity(a, b):
+                a = np.array(a)
+                b = np.array(b)
+                return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+            
+            # Build groups of similar memories
+            processed = set()
+            groups = []
+            
+            for i in range(len(all_memories)):
+                if i in processed:
+                    continue
+                    
+                group = [all_memories[i]]
+                processed.add(i)
+                
+                for j in range(i + 1, len(all_memories)):
+                    if j in processed:
+                        continue
+                    
+                    sim = cosine_similarity(embeddings[i], embeddings[j])
+                    if sim >= threshold:
+                        group.append(all_memories[j])
+                        processed.add(j)
+                
+                if len(group) > 1:
+                    # Calculate average similarity within group
+                    sims = []
+                    for k in range(len(group)):
+                        for l in range(k + 1, len(group)):
+                            idx_k = all_memories.index(group[k])
+                            idx_l = all_memories.index(group[l])
+                            sims.append(cosine_similarity(embeddings[idx_k], embeddings[idx_l]))
+                    
+                    avg_sim = sum(sims) / len(sims) if sims else 0
+                    
+                    groups.append({
+                        "memories": [
+                            {"id": m["id"], "content": m["content"]} 
+                            for m in group
+                        ],
+                        "similarity": round(avg_sim, 3),
+                        "suggested_merge": self._suggest_merge(group)
+                    })
+            
+            total_duplicates = sum(len(g["memories"]) - 1 for g in groups)
+            
+            return {
+                "groups": groups,
+                "total_duplicates": total_duplicates,
+                "total_memories": len(all_memories)
+            }
+            
+        except Exception as e:
+            print(f"Error finding duplicates: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"groups": [], "total_duplicates": 0, "error": str(e)}
+    
+    def _suggest_merge(self, memories: List[Dict[str, Any]]) -> str:
+        """Suggest a merged content for similar memories"""
+        # For now, return the longest one as suggestion
+        # In future, could use LLM to merge intelligently
+        contents = [m["content"] for m in memories]
+        return max(contents, key=len)
+
     async def extract_memories(self, user_id: str, messages: List[Dict[str, str]], metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Extract potential memories from conversation WITHOUT saving them.
         

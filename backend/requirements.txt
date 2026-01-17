@@ -41,5 +41,8 @@ psutil==5.9.7
 mem0ai>=1.0.0
 chromadb>=0.4.0
 
-# Text-to-Speech
-edge-tts>=6.1.0
+# Text-to-Speech (Chatterbox - local GPU-accelerated TTS)
+# Note: Requires Python 3.11 for best compatibility
+# Install PyTorch with CUDA first: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+chatterbox-tts>=0.1.0
+torchaudio>=2.0.0

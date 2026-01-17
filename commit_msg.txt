@@ -1,0 +1,8 @@
+feat: redesign converse page with modern audio visualizations
+
+- Added glowing ring visualizer with animated particles
+- Added flowing waveform visualizer with gradient fills
+- Cyan theme for user listening, purple/pink for AI speaking
+- Smooth animations and audio-reactive effects
+- Bottom input bar with mic button
+- Cleaner dark UI design

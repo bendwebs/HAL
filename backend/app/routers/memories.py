@@ -289,6 +289,104 @@ async def get_memory_history(
     return {"memory_id": memory_id, "history": history}
 
 
+class ConsolidateRequest(BaseModel):
+    """Request to consolidate/deduplicate memories"""
+    similarity_threshold: float = Field(0.85, ge=0.5, le=1.0, description="Threshold for considering memories similar")
+    dry_run: bool = Field(True, description="If true, only report what would be changed")
+
+
+class MergeMemoriesRequest(BaseModel):
+    """Request to merge specific memories"""
+    memory_ids: List[str] = Field(..., min_length=2, description="IDs of memories to merge")
+    merged_content: str = Field(..., min_length=1, description="The merged content")
+
+
+@router.post("/consolidate")
+async def consolidate_memories(
+    request: ConsolidateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Analyze memories for duplicates and suggest consolidations
+    
+    Uses semantic similarity to find memories that could be merged.
+    """
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    result = await memory_system.find_duplicates(
+        user_id=current_user["_id"],
+        threshold=request.similarity_threshold
+    )
+    
+    if not request.dry_run and result.get("groups"):
+        # Auto-consolidate by keeping only the most complete memory in each group
+        deleted_count = 0
+        for group in result["groups"]:
+            memories = group["memories"]
+            if len(memories) > 1:
+                # Keep the longest/most complete one
+                memories_sorted = sorted(memories, key=lambda m: len(m["content"]), reverse=True)
+                keep = memories_sorted[0]
+                for mem in memories_sorted[1:]:
+                    success = await memory_system.delete_memory(mem["id"])
+                    if success:
+                        deleted_count += 1
+        
+        result["deleted"] = deleted_count
+    
+    return result
+
+
+@router.post("/merge")
+async def merge_memories(
+    request: MergeMemoriesRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Merge multiple memories into one
+    
+    Creates a new memory with the merged content and deletes the originals.
+    """
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    # Verify all memories exist and belong to user
+    for mem_id in request.memory_ids:
+        memory = await memory_system.get_memory(mem_id)
+        if not memory:
+            raise HTTPException(status_code=404, detail=f"Memory {mem_id} not found")
+    
+    # Create the merged memory
+    result = await memory_system.add_memory(
+        user_id=current_user["_id"],
+        content=request.merged_content,
+        metadata={"merged_from": request.memory_ids}
+    )
+    
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to create merged memory")
+    
+    # Delete the original memories
+    deleted = 0
+    for mem_id in request.memory_ids:
+        if await memory_system.delete_memory(mem_id):
+            deleted += 1
+    
+    new_memory = result.get("results", [{}])[0]
+    
+    return {
+        "success": True,
+        "merged_memory": {
+            "id": new_memory.get("id", ""),
+            "content": new_memory.get("memory", request.merged_content)
+        },
+        "deleted_count": deleted
+    }
+
+
 @router.post("/confirm", status_code=status.HTTP_201_CREATED)
 async def confirm_memories(
     data: ConfirmMemoriesRequest,
