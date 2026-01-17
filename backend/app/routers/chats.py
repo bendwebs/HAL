@@ -117,6 +117,8 @@ async def create_chat(
         "title": chat_data.title,
         "persona_id": ObjectId(chat_data.persona_id) if chat_data.persona_id else None,
         "model_override": chat_data.model_override,
+        "tts_enabled": chat_data.tts_enabled,
+        "tts_voice_id": chat_data.tts_voice_id,
         "visibility": ChatVisibility.PRIVATE,
         "shared_with": [],
         "share_includes_history": True,
@@ -133,6 +135,8 @@ async def create_chat(
         title=chat_doc["title"],
         persona_id=str(chat_doc["persona_id"]) if chat_doc["persona_id"] else None,
         model_override=chat_doc["model_override"],
+        tts_enabled=chat_doc["tts_enabled"],
+        tts_voice_id=chat_doc["tts_voice_id"],
         visibility=chat_doc["visibility"],
         shared_with=[],
         share_includes_history=True,
@@ -180,6 +184,8 @@ async def get_chat(
         title=chat["title"],
         persona_id=str(chat["persona_id"]) if chat.get("persona_id") else None,
         model_override=chat.get("model_override"),
+        tts_enabled=chat.get("tts_enabled", False),
+        tts_voice_id=chat.get("tts_voice_id"),
         visibility=chat["visibility"],
         shared_with=[
             SharedUser(**s) for s in chat.get("shared_with", [])
@@ -209,6 +215,10 @@ async def update_chat(
         updates["persona_id"] = ObjectId(update.persona_id) if update.persona_id else None
     if update.model_override is not None:
         updates["model_override"] = update.model_override
+    if update.tts_enabled is not None:
+        updates["tts_enabled"] = update.tts_enabled
+    if update.tts_voice_id is not None:
+        updates["tts_voice_id"] = update.tts_voice_id
     
     await database.chats.update_one(
         {"_id": ObjectId(chat_id)},
