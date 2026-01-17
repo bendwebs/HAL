@@ -26,7 +26,7 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 # TTS Configuration
 INDEXTTS_DIR = Path(os.environ.get("INDEXTTS_PATH", "E:\\Coding\\index-tts"))
 TTS_SERVICE_FILE = BACKEND_DIR / "app" / "services" / "tts_service.py"
-ENABLE_TTS = os.environ.get("HAL_ENABLE_TTS", "").lower() in ("1", "true", "yes")
+ENABLE_TTS = os.environ.get("HAL_ENABLE_TTS", "1").lower() in ("1", "true", "yes")
 
 # Determine Python executable (prefer venv)
 VENV_PYTHON = BACKEND_DIR / "venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
