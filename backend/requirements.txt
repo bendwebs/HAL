@@ -40,3 +40,6 @@ psutil==5.9.7
 # Memory system (Mem0 with ChromaDB vector store)
 mem0ai>=1.0.0
 chromadb>=0.4.0
+
+# Text-to-Speech
+edge-tts>=6.1.0

@@ -1,261 +1,139 @@
 """
-IndexTTS Service - Text-to-Speech integration for HAL
-Runs as a separate service due to heavy GPU requirements
+Edge-TTS Service - Text-to-Speech using Microsoft Edge TTS
+No API key required, runs in-process
 """
 
 import os
-import sys
-import json
-import asyncio
-import tempfile
 import hashlib
+import asyncio
+from typing import Optional, List, Dict
 from pathlib import Path
-from typing import Optional
-from datetime import datetime
 
-# Configuration
-# Default path is inside HAL folder (E:\Coding\Hal\index-tts)
+# TTS Cache directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HAL_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR)))
-INDEXTTS_PATH = os.environ.get("INDEXTTS_PATH", os.path.join(HAL_ROOT, "index-tts"))
-CHECKPOINTS_PATH = os.path.join(INDEXTTS_PATH, "checkpoints")
-VOICE_SAMPLES_PATH = os.environ.get("HAL_VOICE_SAMPLES", os.path.join(HAL_ROOT, "backend", "data", "voices"))
 TTS_CACHE_PATH = os.environ.get("HAL_TTS_CACHE", os.path.join(HAL_ROOT, "backend", "data", "tts_cache"))
 
-# Ensure directories exist
-os.makedirs(VOICE_SAMPLES_PATH, exist_ok=True)
+# Ensure cache directory exists
 os.makedirs(TTS_CACHE_PATH, exist_ok=True)
 
+# Available voices (subset of edge-tts voices)
+VOICES = {
+    "en-US-GuyNeural": {"name": "Guy (US)", "gender": "male", "locale": "en-US"},
+    "en-US-JennyNeural": {"name": "Jenny (US)", "gender": "female", "locale": "en-US"},
+    "en-US-AriaNeural": {"name": "Aria (US)", "gender": "female", "locale": "en-US"},
+    "en-US-DavisNeural": {"name": "Davis (US)", "gender": "male", "locale": "en-US"},
+    "en-GB-SoniaNeural": {"name": "Sonia (UK)", "gender": "female", "locale": "en-GB"},
+    "en-GB-RyanNeural": {"name": "Ryan (UK)", "gender": "male", "locale": "en-GB"},
+    "en-AU-NatashaNeural": {"name": "Natasha (AU)", "gender": "female", "locale": "en-AU"},
+    "en-AU-WilliamNeural": {"name": "William (AU)", "gender": "male", "locale": "en-AU"},
+}
 
-class IndexTTSService:
-    """Wrapper for IndexTTS model"""
+DEFAULT_VOICE = "en-US-GuyNeural"
+
+
+class EdgeTTSService:
+    """Edge-TTS wrapper for text-to-speech"""
     
     def __init__(self):
-        self.tts = None
         self.is_available = False
         self._init_error = None
-        self.default_voice = None
-        
-    def initialize(self, use_fp16: bool = True, use_cuda_kernel: bool = False):
-        """Initialize the IndexTTS model"""
+        self._initialize()
+    
+    def _initialize(self):
+        """Initialize edge-tts"""
         try:
-            # Add IndexTTS to path
-            if INDEXTTS_PATH not in sys.path:
-                sys.path.insert(0, INDEXTTS_PATH)
-            
-            from indextts.infer_v2 import IndexTTS2
-            
-            config_path = os.path.join(CHECKPOINTS_PATH, "config.yaml")
-            
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"IndexTTS config not found at {config_path}")
-            
-            print(f"[TTS] Initializing IndexTTS2 from {CHECKPOINTS_PATH}...")
-            self.tts = IndexTTS2(
-                cfg_path=config_path,
-                model_dir=CHECKPOINTS_PATH,
-                use_fp16=use_fp16,
-                use_cuda_kernel=use_cuda_kernel,
-                use_deepspeed=False
-            )
-            
-            # Find default voice
-            self._find_default_voice()
-            
+            import edge_tts
+            self.edge_tts = edge_tts
             self.is_available = True
-            print(f"[TTS] IndexTTS2 initialized successfully")
-            print(f"[TTS] Default voice: {self.default_voice}")
-            
+            print("[TTS] Edge-TTS initialized successfully")
+        except ImportError as e:
+            self._init_error = "edge-tts not installed. Run: pip install edge-tts"
+            print(f"[TTS] Failed to initialize: {self._init_error}")
         except Exception as e:
             self._init_error = str(e)
             print(f"[TTS] Failed to initialize: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def _find_default_voice(self):
-        """Find a default voice sample"""
-        # Check user voices first
-        if os.path.exists(VOICE_SAMPLES_PATH):
-            for f in os.listdir(VOICE_SAMPLES_PATH):
-                if f.endswith(('.wav', '.mp3', '.flac')):
-                    self.default_voice = os.path.join(VOICE_SAMPLES_PATH, f)
-                    return
-        
-        # Fall back to IndexTTS examples
-        examples_path = os.path.join(INDEXTTS_PATH, "examples")
-        if os.path.exists(examples_path):
-            for f in os.listdir(examples_path):
-                if f.startswith("voice_") and f.endswith(".wav"):
-                    self.default_voice = os.path.join(examples_path, f)
-                    return
     
     def get_cache_path(self, text: str, voice_id: str) -> str:
         """Generate a cache path for the given text and voice"""
         cache_key = hashlib.md5(f"{text}:{voice_id}".encode()).hexdigest()
-        return os.path.join(TTS_CACHE_PATH, f"{cache_key}.wav")
+        return os.path.join(TTS_CACHE_PATH, f"{cache_key}.mp3")
     
-    def generate(
+    async def generate(
         self,
         text: str,
-        voice_path: Optional[str] = None,
-        output_path: Optional[str] = None,
+        voice_id: Optional[str] = None,
         use_cache: bool = True
     ) -> Optional[str]:
         """
-        Generate speech from text
+        Generate speech from text using edge-tts
         
         Args:
-            text: Text to synthesize
-            voice_path: Path to voice sample for cloning (uses default if None)
-            output_path: Where to save the output (auto-generated if None)
+            text: Text to convert to speech
+            voice_id: Voice ID (e.g., "en-US-GuyNeural")
             use_cache: Whether to use cached audio if available
             
         Returns:
             Path to generated audio file, or None if failed
         """
         if not self.is_available:
-            print(f"[TTS] Service not available: {self._init_error}")
-            return None
+            raise Exception(f"TTS not available: {self._init_error}")
         
-        # Use default voice if not specified
-        if not voice_path:
-            voice_path = self.default_voice
-        
-        if not voice_path or not os.path.exists(voice_path):
-            print(f"[TTS] No valid voice sample found")
-            return None
+        voice = voice_id or DEFAULT_VOICE
+        if voice not in VOICES:
+            voice = DEFAULT_VOICE
         
         # Check cache
-        voice_id = os.path.basename(voice_path)
-        cache_path = self.get_cache_path(text, voice_id)
-        
+        cache_path = self.get_cache_path(text, voice)
         if use_cache and os.path.exists(cache_path):
             print(f"[TTS] Using cached audio: {cache_path}")
             return cache_path
         
-        # Generate output path if not specified
-        if not output_path:
-            output_path = cache_path
-        
         try:
             print(f"[TTS] Generating speech for: {text[:50]}...")
-            self.tts.infer(
-                spk_audio_prompt=voice_path,
-                text=text,
-                output_path=output_path,
-                verbose=False
-            )
-            print(f"[TTS] Generated: {output_path}")
-            return output_path
+            
+            # Generate with edge-tts
+            communicate = self.edge_tts.Communicate(text, voice)
+            await communicate.save(cache_path)
+            
+            print(f"[TTS] Generated audio: {cache_path}")
+            return cache_path
             
         except Exception as e:
             print(f"[TTS] Generation failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+            # Clean up partial file
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+            raise
     
-    def list_voices(self) -> list:
-        """List available voice samples"""
-        voices = []
-        
-        # User voices
-        if os.path.exists(VOICE_SAMPLES_PATH):
-            for f in os.listdir(VOICE_SAMPLES_PATH):
-                if f.endswith(('.wav', '.mp3', '.flac')):
-                    voices.append({
-                        "id": f,
-                        "name": os.path.splitext(f)[0],
-                        "path": os.path.join(VOICE_SAMPLES_PATH, f),
-                        "source": "user"
-                    })
-        
-        # Built-in IndexTTS examples
-        examples_path = os.path.join(INDEXTTS_PATH, "examples")
-        if os.path.exists(examples_path):
-            for f in os.listdir(examples_path):
-                if f.startswith("voice_") and f.endswith(".wav"):
-                    voices.append({
-                        "id": f,
-                        "name": f"IndexTTS {os.path.splitext(f)[0]}",
-                        "path": os.path.join(examples_path, f),
-                        "source": "builtin"
-                    })
-        
-        return voices
-
-
-# FastAPI service for TTS
-if __name__ == "__main__":
-    from fastapi import FastAPI, HTTPException, BackgroundTasks
-    from fastapi.responses import FileResponse
-    from fastapi.middleware.cors import CORSMiddleware
-    from pydantic import BaseModel
-    import uvicorn
+    def get_voices(self) -> List[Dict]:
+        """Get available voices"""
+        return [
+            {
+                "id": voice_id,
+                "name": info["name"],
+                "gender": info["gender"],
+                "locale": info["locale"]
+            }
+            for voice_id, info in VOICES.items()
+        ]
     
-    app = FastAPI(title="HAL TTS Service", version="1.0.0")
-    
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    
-    # Initialize TTS service
-    tts_service = IndexTTSService()
-    
-    class TTSRequest(BaseModel):
-        text: str
-        voice_id: Optional[str] = None
-        use_cache: bool = True
-    
-    @app.on_event("startup")
-    async def startup():
-        print("[TTS Server] Starting up...")
-        tts_service.initialize(use_fp16=True)
-    
-    @app.get("/health")
-    async def health():
+    def get_status(self) -> Dict:
+        """Get service status"""
         return {
-            "status": "healthy" if tts_service.is_available else "unavailable",
-            "error": tts_service._init_error,
-            "default_voice": tts_service.default_voice
+            "status": "healthy" if self.is_available else "unavailable",
+            "error": self._init_error,
+            "default_voice": DEFAULT_VOICE if self.is_available else None
         }
-    
-    @app.get("/voices")
-    async def list_voices():
-        return {"voices": tts_service.list_voices()}
-    
-    @app.post("/generate")
-    async def generate_speech(request: TTSRequest):
-        if not tts_service.is_available:
-            raise HTTPException(status_code=503, detail=f"TTS service unavailable: {tts_service._init_error}")
-        
-        # Find voice path
-        voice_path = None
-        if request.voice_id:
-            voices = tts_service.list_voices()
-            for v in voices:
-                if v["id"] == request.voice_id:
-                    voice_path = v["path"]
-                    break
-        
-        # Generate audio
-        output_path = tts_service.generate(
-            text=request.text,
-            voice_path=voice_path,
-            use_cache=request.use_cache
-        )
-        
-        if not output_path:
-            raise HTTPException(status_code=500, detail="Failed to generate speech")
-        
-        return FileResponse(
-            output_path,
-            media_type="audio/wav",
-            filename="speech.wav"
-        )
-    
-    # Run server
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+
+
+# Global instance
+_tts_service: Optional[EdgeTTSService] = None
+
+
+def get_tts_service() -> EdgeTTSService:
+    """Get or create the TTS service instance"""
+    global _tts_service
+    if _tts_service is None:
+        _tts_service = EdgeTTSService()
+    return _tts_service
