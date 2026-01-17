@@ -1,87 +1,89 @@
-"""Memories Router - Mem0-style memory management"""
+"""Memories Router - Mem0-powered memory management"""
 
 from fastapi import APIRouter, HTTPException, status, Depends, Query
-from bson import ObjectId
-from datetime import datetime
 from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
 
-from app.database import database
 from app.auth import get_current_user
-from app.models.memory import (
-    MemoryCreate, MemoryUpdate, MemoryResponse, 
-    MemoryListResponse, BulkDeleteRequest, MemoryCategory
-)
+from app.services.memory_system import get_memory_system
 
 router = APIRouter(prefix="/memories", tags=["Memories"])
+
+
+# Request/Response Models
+class MemoryCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=2000)
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class MemoryUpdate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=2000)
+
+
+class ConversationAdd(BaseModel):
+    messages: List[Dict[str, str]]
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class MemoryResponse(BaseModel):
+    id: str
+    content: str
+    score: Optional[float] = None
+    metadata: Dict[str, Any] = {}
+    categories: List[str] = []
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class MemoryListResponse(BaseModel):
+    memories: List[MemoryResponse]
+    total: int
+
+
+class SearchRequest(BaseModel):
+    query: str
+    limit: int = Field(10, ge=1, le=50)
+
+
+class ConfirmMemoriesRequest(BaseModel):
+    """Request to confirm or reject pending memories"""
+    memories: List[str] = Field(..., description="List of memory contents to save")
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @router.get("", response_model=MemoryListResponse)
 async def list_memories(
     current_user: Dict[str, Any] = Depends(get_current_user),
-    category: Optional[str] = None,
-    search: Optional[str] = None,
-    sort_by: str = Query("created_at", regex="^(created_at|importance|access_count)$"),
-    sort_order: str = Query("desc", regex="^(asc|desc)$"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
 ):
-    """List user's memories with filtering and sorting"""
-    query = {"user_id": ObjectId(current_user["_id"])}
+    """List all memories for the current user"""
+    memory_system = get_memory_system()
     
-    if category:
-        query["category"] = category
+    if not memory_system.is_available:
+        raise HTTPException(
+            status_code=503, 
+            detail="Memory system not available. Please install mem0ai."
+        )
     
-    if search:
-        query["$text"] = {"$search": search}
-    
-    # Sort direction
-    sort_dir = -1 if sort_order == "desc" else 1
-    
-    # Get total count
-    total = await database.memories.count_documents(query)
-    
-    # Get memories
-    cursor = database.memories.find(query)
-    cursor = cursor.sort(sort_by, sort_dir)
-    cursor = cursor.skip(offset).limit(limit)
-    
-    memories = await cursor.to_list(limit)
+    memories = await memory_system.get_all_memories(
+        user_id=current_user["_id"],
+        limit=limit
+    )
     
     return MemoryListResponse(
         memories=[
             MemoryResponse(
-                id=str(m["_id"]),
+                id=m["id"],
                 content=m["content"],
-                category=m.get("category", "general"),
-                importance=m.get("importance", 0.5),
-                source_chat_id=str(m["source_chat_id"]) if m.get("source_chat_id") else None,
-                access_count=m.get("access_count", 0),
-                created_at=m["created_at"],
-                last_accessed=m.get("last_accessed")
+                metadata=m.get("metadata") or {},
+                categories=m.get("categories") or [],
+                created_at=m.get("created_at"),
+                updated_at=m.get("updated_at")
             )
             for m in memories
         ],
-        total=total
+        total=len(memories)
     )
-
-
-@router.get("/categories", response_model=List[MemoryCategory])
-async def get_categories(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-):
-    """Get memory categories with counts"""
-    pipeline = [
-        {"$match": {"user_id": ObjectId(current_user["_id"])}},
-        {"$group": {"_id": "$category", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}}
-    ]
-    
-    results = await database.memories.aggregate(pipeline).to_list(100)
-    
-    return [
-        MemoryCategory(name=r["_id"] or "general", count=r["count"])
-        for r in results
-    ]
 
 
 @router.post("", response_model=MemoryResponse, status_code=status.HTTP_201_CREATED)
@@ -90,40 +92,98 @@ async def create_memory(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Create a new memory"""
-    from app.services.memory_system import get_memory_system
-    
-    now = datetime.utcnow()
-    
-    # Generate embedding
     memory_system = get_memory_system()
-    embedding = []
-    if memory_system:
-        embedding = await memory_system.generate_embedding(memory_data.content)
     
-    memory_doc = {
-        "user_id": ObjectId(current_user["_id"]),
-        "content": memory_data.content,
-        "category": memory_data.category,
-        "importance": memory_data.importance,
-        "embedding": embedding,
-        "source_chat_id": None,
-        "access_count": 0,
-        "created_at": now,
-        "last_accessed": None
-    }
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
     
-    result = await database.memories.insert_one(memory_doc)
+    result = await memory_system.add_memory(
+        user_id=current_user["_id"],
+        content=memory_data.content,
+        metadata=memory_data.metadata
+    )
+    
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to create memory")
+    
+    # Get the created memory details
+    # Mem0 returns results with the memory info
+    memories = result.get("results", [])
+    if memories:
+        mem = memories[0]
+        return MemoryResponse(
+            id=mem.get("id", ""),
+            content=mem.get("memory", memory_data.content),
+            metadata=mem.get("metadata") or {},
+            categories=mem.get("categories") or [],
+            created_at=mem.get("created_at")
+        )
     
     return MemoryResponse(
-        id=str(result.inserted_id),
-        content=memory_doc["content"],
-        category=memory_doc["category"],
-        importance=memory_doc["importance"],
-        source_chat_id=None,
-        access_count=0,
-        created_at=now,
-        last_accessed=None
+        id="",
+        content=memory_data.content,
+        metadata=memory_data.metadata or {}
     )
+
+
+@router.post("/conversation", status_code=status.HTTP_201_CREATED)
+async def add_conversation_memories(
+    data: ConversationAdd,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Extract and store memories from a conversation
+    
+    Mem0 automatically extracts relevant facts from the conversation.
+    """
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    result = await memory_system.add_conversation(
+        user_id=current_user["_id"],
+        messages=data.messages,
+        metadata=data.metadata
+    )
+    
+    if not result:
+        return {"extracted": 0, "memories": []}
+    
+    memories = result.get("results", [])
+    return {
+        "extracted": len(memories),
+        "memories": [
+            {
+                "id": m.get("id", ""),
+                "content": m.get("memory", ""),
+                "event": m.get("event", "ADD")
+            }
+            for m in memories
+        ]
+    }
+
+
+@router.post("/search")
+async def search_memories(
+    search: SearchRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Search memories semantically"""
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    results = await memory_system.search_memories(
+        user_id=current_user["_id"],
+        query=search.query,
+        limit=search.limit
+    )
+    
+    return {
+        "query": search.query,
+        "results": results
+    }
 
 
 @router.get("/{memory_id}", response_model=MemoryResponse)
@@ -131,24 +191,24 @@ async def get_memory(
     memory_id: str,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Get memory details"""
-    memory = await database.memories.find_one({
-        "_id": ObjectId(memory_id),
-        "user_id": ObjectId(current_user["_id"])
-    })
+    """Get a specific memory"""
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    memory = await memory_system.get_memory(memory_id)
     
     if not memory:
         raise HTTPException(status_code=404, detail="Memory not found")
     
     return MemoryResponse(
-        id=str(memory["_id"]),
+        id=memory["id"],
         content=memory["content"],
-        category=memory.get("category", "general"),
-        importance=memory.get("importance", 0.5),
-        source_chat_id=str(memory["source_chat_id"]) if memory.get("source_chat_id") else None,
-        access_count=memory.get("access_count", 0),
-        created_at=memory["created_at"],
-        last_accessed=memory.get("last_accessed")
+        metadata=memory.get("metadata") or {},
+        categories=memory.get("categories") or [],
+        created_at=memory.get("created_at"),
+        updated_at=memory.get("updated_at")
     )
 
 
@@ -158,33 +218,30 @@ async def update_memory(
     update: MemoryUpdate,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Update memory"""
-    memory = await database.memories.find_one({
-        "_id": ObjectId(memory_id),
-        "user_id": ObjectId(current_user["_id"])
-    })
+    """Update a memory"""
+    memory_system = get_memory_system()
     
-    if not memory:
-        raise HTTPException(status_code=404, detail="Memory not found")
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
     
-    updates = {}
-    update_data = update.model_dump(exclude_unset=True)
+    result = await memory_system.update_memory(memory_id, update.content)
     
-    # Re-generate embedding if content changed
-    if "content" in update_data:
-        from app.services.memory_system import get_memory_system
-        memory_system = get_memory_system()
-        if memory_system:
-            updates["embedding"] = await memory_system.generate_embedding(update_data["content"])
+    if not result:
+        raise HTTPException(status_code=404, detail="Memory not found or update failed")
     
-    updates.update(update_data)
+    # Fetch updated memory
+    memory = await memory_system.get_memory(memory_id)
+    if memory:
+        return MemoryResponse(
+            id=memory["id"],
+            content=memory["content"],
+            metadata=memory.get("metadata") or {},
+            categories=memory.get("categories") or [],
+            created_at=memory.get("created_at"),
+            updated_at=memory.get("updated_at")
+        )
     
-    await database.memories.update_one(
-        {"_id": ObjectId(memory_id)},
-        {"$set": updates}
-    )
-    
-    return await get_memory(memory_id, current_user)
+    return MemoryResponse(id=memory_id, content=update.content)
 
 
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -192,45 +249,83 @@ async def delete_memory(
     memory_id: str,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Delete memory"""
-    result = await database.memories.delete_one({
-        "_id": ObjectId(memory_id),
-        "user_id": ObjectId(current_user["_id"])
-    })
-    
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Memory not found")
-
-
-@router.post("/bulk-delete", status_code=status.HTTP_204_NO_CONTENT)
-async def bulk_delete_memories(
-    request: BulkDeleteRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-):
-    """Delete multiple memories"""
-    await database.memories.delete_many({
-        "_id": {"$in": [ObjectId(id) for id in request.memory_ids]},
-        "user_id": ObjectId(current_user["_id"])
-    })
-
-
-@router.get("/search/semantic")
-async def search_memories(
-    query: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    limit: int = Query(10, ge=1, le=50),
-):
-    """Search memories semantically"""
-    from app.services.memory_system import get_memory_system
-    
+    """Delete a memory"""
     memory_system = get_memory_system()
-    if not memory_system:
+    
+    if not memory_system.is_available:
         raise HTTPException(status_code=503, detail="Memory system not available")
     
-    results = await memory_system.search_memories(
-        user_id=current_user["_id"],
-        query=query,
-        limit=limit
-    )
+    success = await memory_system.delete_memory(memory_id)
     
-    return results
+    if not success:
+        raise HTTPException(status_code=404, detail="Memory not found or delete failed")
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_all_memories(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Delete all memories for the current user"""
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    await memory_system.delete_all_memories(user_id=current_user["_id"])
+
+
+@router.get("/{memory_id}/history")
+async def get_memory_history(
+    memory_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Get history of a memory (previous versions)"""
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    history = memory_system.get_history(memory_id)
+    return {"memory_id": memory_id, "history": history}
+
+
+@router.post("/confirm", status_code=status.HTTP_201_CREATED)
+async def confirm_memories(
+    data: ConfirmMemoriesRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Confirm and save user-approved memories
+    
+    This endpoint saves memories that the user has explicitly approved.
+    """
+    memory_system = get_memory_system()
+    
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    print(f"[DEBUG] Confirming {len(data.memories)} memories for user {current_user['_id']}")
+    
+    saved_memories = []
+    for content in data.memories:
+        if content.strip():
+            print(f"[DEBUG] Saving memory: {content[:50]}...")
+            result = await memory_system.add_memory(
+                user_id=current_user["_id"],
+                content=content.strip(),
+                metadata=data.metadata
+            )
+            print(f"[DEBUG] Add memory result: {result}")
+            if result:
+                memories = result.get("results", [])
+                for m in memories:
+                    saved_memories.append({
+                        "id": m.get("id", ""),
+                        "content": m.get("memory", content),
+                        "event": m.get("event", "ADD")
+                    })
+    
+    print(f"[DEBUG] Saved {len(saved_memories)} memories")
+    return {
+        "saved": len(saved_memories),
+        "memories": saved_memories
+    }

@@ -29,6 +29,8 @@ class ChatBase(BaseModel):
     title: str = "New Chat"
     persona_id: Optional[str] = None
     model_override: Optional[str] = None
+    tts_enabled: bool = False
+    tts_voice_id: Optional[str] = None
 
 
 class ChatCreate(ChatBase):
@@ -41,6 +43,8 @@ class ChatUpdate(BaseModel):
     title: Optional[str] = None
     persona_id: Optional[str] = None
     model_override: Optional[str] = None
+    tts_enabled: Optional[bool] = None
+    tts_voice_id: Optional[str] = None
 
 
 class ShareRequest(BaseModel):
@@ -76,6 +80,8 @@ class ChatResponse(BaseModel):
     title: str
     persona_id: Optional[str]
     model_override: Optional[str]
+    tts_enabled: bool = False
+    tts_voice_id: Optional[str] = None
     visibility: ChatVisibility
     shared_with: List[SharedUser]
     share_includes_history: bool

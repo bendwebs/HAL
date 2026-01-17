@@ -56,6 +56,8 @@ export interface Chat {
   title: string;
   persona_id: string | null;
   model_override: string | null;
+  tts_enabled: boolean;
+  tts_voice_id: string | null;
   visibility: ChatVisibility;
   shared_with: SharedUser[];
   share_includes_history: boolean;

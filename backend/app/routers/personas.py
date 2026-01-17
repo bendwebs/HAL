@@ -36,6 +36,7 @@ async def list_personas(
             name=p["name"],
             description=p.get("description", ""),
             avatar_emoji=p.get("avatar_emoji", "🤖"),
+            temperature=p.get("temperature", 0.7),
             is_public=p.get("is_public", False),
             is_system=p.get("is_system", False),
             is_owner=str(p.get("creator_id")) == user_id if p.get("creator_id") else False

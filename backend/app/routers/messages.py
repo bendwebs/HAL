@@ -1,4 +1,5 @@
 """Messages Router - Handles chat messages and AI responses"""
+# Force reload trigger
 
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -185,6 +186,83 @@ async def send_message(
                 
                 # Send final message with ID
                 yield f"data: {json.dumps({'type': 'saved', 'data': {'message_id': str(result.inserted_id)}})}\n\n"
+                
+                # Auto-generate title if this is the first exchange (title is still "New Chat")
+                if chat.get("title", "").strip().lower() in ["new chat", ""]:
+                    message_count = await database.messages.count_documents({"chat_id": ObjectId(chat_id)})
+                    if message_count >= 2:  # At least user message + assistant response
+                        try:
+                            from app.services.ollama_client import get_ollama_client
+                            ollama = get_ollama_client()
+                            
+                            # Get first user message for title generation
+                            first_user_msg = await database.messages.find_one(
+                                {"chat_id": ObjectId(chat_id), "role": "user"},
+                                sort=[("created_at", 1)]
+                            )
+                            
+                            if first_user_msg:
+                                title_prompt = f"Generate a very short title (3-6 words max) for a chat that starts with this message: \"{first_user_msg['content'][:200]}\"\n\nRespond with ONLY the title, no quotes, no explanation."
+                                
+                                title_response = await ollama.chat(
+                                    model=chat.get("model_override") or "qwen2.5:7b",
+                                    messages=[{"role": "user", "content": title_prompt}]
+                                )
+                                
+                                new_title = title_response.get("message", {}).get("content", "").strip()
+                                # Clean up the title
+                                new_title = new_title.strip('"\'').strip()
+                                if new_title and len(new_title) <= 50:
+                                    await database.chats.update_one(
+                                        {"_id": ObjectId(chat_id)},
+                                        {"$set": {"title": new_title}}
+                                    )
+                                    yield f"data: {json.dumps({'type': 'title_updated', 'data': {'title': new_title}})}\n\n"
+                        except Exception as e:
+                            print(f"Failed to auto-generate title: {e}")
+                
+                # Extract and save memories in background (don't block the response)
+                import asyncio
+                
+                async def extract_and_save_memories():
+                    """Background task to extract and save memories"""
+                    try:
+                        print(f"[DEBUG] Starting background memory extraction for chat {chat_id}")
+                        recent_msgs = await database.messages.find(
+                            {"chat_id": ObjectId(chat_id)}
+                        ).sort("created_at", -1).limit(6).to_list(6)
+                        
+                        if len(recent_msgs) >= 2:
+                            recent_msgs.reverse()
+                            from app.services.memory_system import get_memory_system
+                            mem_system = get_memory_system()
+                            
+                            if mem_system.is_available:
+                                formatted = [
+                                    {"role": m["role"], "content": m["content"]} 
+                                    for m in recent_msgs
+                                ]
+                                
+                                result = await mem_system.extract_memories(
+                                    user_id=current_user["_id"],
+                                    messages=formatted,
+                                    metadata={"chat_id": chat_id}
+                                )
+                                
+                                if result:
+                                    pending = result.get("pending", [])
+                                    for memory_content in pending:
+                                        await mem_system.add_memory(
+                                            user_id=current_user["_id"],
+                                            content=memory_content,
+                                            metadata={"chat_id": chat_id, "auto_extracted": True}
+                                        )
+                                        print(f"[DEBUG] Background saved memory: {memory_content}")
+                    except Exception as e:
+                        print(f"[DEBUG] Background memory extraction error: {e}")
+                
+                # Start background task (non-blocking)
+                asyncio.create_task(extract_and_save_memories())
                 
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'data': {'message': str(e)}})}\n\n"

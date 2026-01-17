@@ -35,6 +35,10 @@ out/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# Data directories
+backend/data/
+data/
+
 # Logs
 *.log
 npm-debug.log*

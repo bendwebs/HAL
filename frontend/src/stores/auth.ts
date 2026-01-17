@@ -21,7 +21,7 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       user: null,
       token: null,
-      isLoading: false,
+      isLoading: true,  // Start as true to prevent redirect before checking
       isAuthenticated: false,
       
       login: async (username: string, password: string) => {
@@ -70,7 +70,7 @@ export const useAuthStore = create<AuthState>()(
       fetchUser: async () => {
         const token = localStorage.getItem('token');
         if (!token) {
-          set({ isAuthenticated: false });
+          set({ isAuthenticated: false, isLoading: false });
           return;
         }
         

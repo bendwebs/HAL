@@ -40,6 +40,7 @@ class DocumentResponse(BaseModel):
     content_type: str
     file_size: int
     chunk_count: int
+    status: str = "ready"
     created_at: datetime
 
 
