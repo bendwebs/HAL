@@ -23,12 +23,21 @@ BASE_DIR = Path(__file__).parent
 BACKEND_DIR = BASE_DIR / "backend"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
+# TTS Configuration
+INDEXTTS_DIR = Path(os.environ.get("INDEXTTS_PATH", "E:\\Coding\\index-tts"))
+TTS_SERVICE_FILE = BACKEND_DIR / "app" / "services" / "tts_service.py"
+ENABLE_TTS = os.environ.get("HAL_ENABLE_TTS", "").lower() in ("1", "true", "yes")
+
 # Determine Python executable (prefer venv)
 VENV_PYTHON = BACKEND_DIR / "venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
 PYTHON_EXE = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
 
+# IndexTTS uses uv for environment management
+INDEXTTS_UV = "uv"
+
 BACKEND_CMD = [PYTHON_EXE, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 FRONTEND_CMD = ["npm.cmd" if os.name == "nt" else "npm", "run", "dev"]
+TTS_CMD = [INDEXTTS_UV, "run", "python", str(TTS_SERVICE_FILE)]
 
 RESTART_DELAY = 3  # seconds to wait before restarting
 MAX_RESTART_ATTEMPTS = 10  # max restarts within the window
@@ -240,9 +249,28 @@ class HALRunner:
             cwd=FRONTEND_DIR,
             color=Colors.BLUE
         ))
+        
+        # TTS Service (optional - requires IndexTTS installation)
+        if ENABLE_TTS and INDEXTTS_DIR.exists():
+            tts_env = os.environ.copy()
+            tts_env["INDEXTTS_PATH"] = str(INDEXTTS_DIR)
+            tts_env["HAL_VOICE_SAMPLES"] = str(BACKEND_DIR / "data" / "voices")
+            tts_env["HAL_TTS_CACHE"] = str(BACKEND_DIR / "data" / "tts_cache")
+            
+            self.managers.append(ProcessManager(
+                name="TTS",
+                cmd=TTS_CMD,
+                cwd=INDEXTTS_DIR,
+                color=Colors.GREEN,
+                env=tts_env
+            ))
+            log("HAL", "TTS service enabled", Colors.GREEN, "INFO")
+        elif ENABLE_TTS:
+            log("HAL", f"TTS enabled but IndexTTS not found at {INDEXTTS_DIR}", Colors.YELLOW, "WARN")
     
     def print_banner(self):
         """Print startup banner"""
+        tts_status = f"{Colors.GREEN}http://localhost:8001{Colors.END}" if ENABLE_TTS and INDEXTTS_DIR.exists() else f"{Colors.YELLOW}disabled{Colors.END}"
         try:
             banner = f"""
 {Colors.BOLD}{Colors.CYAN}
@@ -251,9 +279,12 @@ class HALRunner:
 {Colors.END}
   Backend:  {Colors.CYAN}http://localhost:8000{Colors.END}
   Frontend: {Colors.BLUE}http://localhost:3000{Colors.END}
+  TTS:      {tts_status}
   API Docs: {Colors.CYAN}http://localhost:8000/docs{Colors.END}
   
   Default Login: {Colors.YELLOW}admin / admin123{Colors.END}
+  
+  To enable TTS: set {Colors.CYAN}HAL_ENABLE_TTS=1{Colors.END}
   
   Press {Colors.RED}Ctrl+C{Colors.END} to stop all services
 {Colors.BOLD}{'='*50}{Colors.END}
@@ -264,8 +295,10 @@ class HALRunner:
             print("  ======================")
             print("  Backend:  http://localhost:8000")
             print("  Frontend: http://localhost:3000")
+            print(f"  TTS:      {'http://localhost:8001' if ENABLE_TTS else 'disabled'}")
             print("  API Docs: http://localhost:8000/docs")
             print("  Default Login: admin / admin123")
+            print("  To enable TTS: set HAL_ENABLE_TTS=1")
             print("  Press Ctrl+C to stop")
             print("=" * 50 + "\n", flush=True)
     

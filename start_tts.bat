@@ -1,23 +1,43 @@
 @echo off
-REM HAL TTS Service Startup Script
+REM HAL TTS Service - Standalone Startup Script
+REM Use this to start TTS separately, or use: start.bat --tts
 
-echo Starting IndexTTS Service for HAL...
+title HAL TTS Service
+cd /d "%~dp0"
+
+echo ================================================
+echo HAL TTS Service (IndexTTS)
+echo ================================================
 echo.
 
 REM Set paths
 set INDEXTTS_PATH=E:\Coding\index-tts
-set HAL_VOICE_SAMPLES=E:\Coding\Hal\backend\data\voices
-set HAL_TTS_CACHE=E:\Coding\Hal\backend\data\tts_cache
+set HAL_VOICE_SAMPLES=%~dp0backend\data\voices
+set HAL_TTS_CACHE=%~dp0backend\data\tts_cache
+
+REM Check if IndexTTS exists
+if not exist "%INDEXTTS_PATH%" (
+    echo ERROR: IndexTTS not found at %INDEXTTS_PATH%
+    echo.
+    echo Please install IndexTTS first:
+    echo   git clone https://github.com/index-tts/index-tts.git %INDEXTTS_PATH%
+    echo   cd %INDEXTTS_PATH%
+    echo   git lfs pull
+    echo   pip install -U uv
+    echo   uv sync --all-extras
+    echo.
+    pause
+    exit /b 1
+)
 
 REM Create directories
 if not exist "%HAL_VOICE_SAMPLES%" mkdir "%HAL_VOICE_SAMPLES%"
 if not exist "%HAL_TTS_CACHE%" mkdir "%HAL_TTS_CACHE%"
 
-REM Activate IndexTTS environment and run service
-cd /d %INDEXTTS_PATH%
-
-REM Use uv to run the TTS service
-echo Running TTS service on port 8001...
-uv run python E:\Coding\Hal\backend\app\services\tts_service.py
+REM Run TTS service using uv from IndexTTS directory
+cd /d "%INDEXTTS_PATH%"
+echo Starting TTS service on http://localhost:8001 ...
+echo.
+uv run python "%~dp0backend\app\services\tts_service.py"
 
 pause
