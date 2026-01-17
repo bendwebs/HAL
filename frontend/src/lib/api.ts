@@ -88,6 +88,15 @@ export const chats = {
     
   delete: (id: string) =>
     request<void>(`/api/chats/${id}`, { method: 'DELETE' }),
+  
+  bulkDelete: (titleFilter?: string, deleteEmptyOnly = true) =>
+    request<{ deleted: number; skipped: number; message: string }>(
+      `/api/chats/bulk/delete?${new URLSearchParams({
+        ...(titleFilter && { title_filter: titleFilter }),
+        delete_empty_only: deleteEmptyOnly.toString()
+      })}`,
+      { method: 'DELETE' }
+    ),
     
   share: (id: string, userIds: string[], permission: string, includeHistory: boolean) =>
     request<any>(`/api/chats/${id}/share`, {
@@ -326,13 +335,29 @@ export const models = {
   list: () => request<{ models: any[]; default_chat: string; default_embed: string }>('/api/models'),
 };
 
-// TTS API
+// TTS API (Chatterbox local TTS)
 export const tts = {
-  health: () => request<{ status: string; error?: string; default_voice?: string }>('/api/tts/health'),
+  health: () => request<{ 
+    status: string; 
+    error?: string; 
+    device?: string;
+    gpu?: string;
+    model_loaded?: boolean;
+    turbo_available?: boolean;
+  }>('/api/tts/health'),
   
-  voices: () => request<{ voices: Array<{ id: string; name: string; path: string; source: string }> }>('/api/tts/voices'),
+  voices: () => request<{ voices: Array<{ id: string; name: string; path: string | null; source: string }> }>('/api/tts/voices'),
   
-  generate: async (text: string, voiceId?: string): Promise<Blob> => {
+  generate: async (
+    text: string, 
+    voiceId?: string,
+    options?: {
+      exaggeration?: number;  // 0.0-1.0, emotion intensity
+      cfgWeight?: number;     // 0.0-1.0, voice similarity
+      useCache?: boolean;
+      useTurbo?: boolean;
+    }
+  ): Promise<Blob> => {
     const token = localStorage.getItem('token');
     const response = await fetch(`${API_URL}/api/tts/generate`, {
       method: 'POST',
@@ -340,7 +365,14 @@ export const tts = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
-      body: JSON.stringify({ text, voice_id: voiceId, use_cache: true }),
+      body: JSON.stringify({ 
+        text, 
+        voice_id: voiceId,
+        exaggeration: options?.exaggeration ?? 0.5,
+        cfg_weight: options?.cfgWeight ?? 0.5,
+        use_cache: options?.useCache ?? true,
+        use_turbo: options?.useTurbo ?? true
+      }),
     });
     
     if (!response.ok) {
@@ -349,6 +381,29 @@ export const tts = {
     
     return response.blob();
   },
+  
+  uploadVoice: async (voiceId: string, file: File): Promise<{ success: boolean; voice_id: string; path: string }> => {
+    const token = localStorage.getItem('token');
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await fetch(`${API_URL}/api/tts/voices/upload?voice_id=${encodeURIComponent(voiceId)}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      throw new ApiError(response.status, 'Failed to upload voice sample');
+    }
+    
+    return response.json();
+  },
+  
+  deleteVoice: (voiceId: string) => 
+    request<{ success: boolean; message: string }>(`/api/tts/voices/${voiceId}`, { method: 'DELETE' }),
 };
 
 export { ApiError };
