@@ -270,7 +270,15 @@ class HALRunner:
     
     def print_banner(self):
         """Print startup banner"""
-        tts_status = f"{Colors.GREEN}http://localhost:8001{Colors.END}" if ENABLE_TTS and INDEXTTS_DIR.exists() else f"{Colors.YELLOW}disabled{Colors.END}"
+        if ENABLE_TTS and INDEXTTS_DIR.exists():
+            tts_status = f"{Colors.GREEN}http://localhost:8001{Colors.END}"
+            tts_hint = ""
+        elif ENABLE_TTS:
+            tts_status = f"{Colors.YELLOW}not installed{Colors.END}"
+            tts_hint = f"\n  Install TTS: {Colors.CYAN}git clone https://github.com/index-tts/index-tts.git{Colors.END}"
+        else:
+            tts_status = f"{Colors.YELLOW}disabled{Colors.END}"
+            tts_hint = f"\n  Enable TTS: {Colors.CYAN}start.bat{Colors.END} (enabled by default)"
         try:
             banner = f"""
 {Colors.BOLD}{Colors.CYAN}
@@ -283,22 +291,22 @@ class HALRunner:
   API Docs: {Colors.CYAN}http://localhost:8000/docs{Colors.END}
   
   Default Login: {Colors.YELLOW}admin / admin123{Colors.END}
-  
-  To enable TTS: set {Colors.CYAN}HAL_ENABLE_TTS=1{Colors.END}
-  
+  {tts_hint}
   Press {Colors.RED}Ctrl+C{Colors.END} to stop all services
 {Colors.BOLD}{'='*50}{Colors.END}
 """
             print(banner, flush=True)
         except:
+            tts_display = "http://localhost:8001" if ENABLE_TTS and INDEXTTS_DIR.exists() else ("not installed" if ENABLE_TTS else "disabled")
             print("\n  HAL - Local AI System")
             print("  ======================")
             print("  Backend:  http://localhost:8000")
             print("  Frontend: http://localhost:3000")
-            print(f"  TTS:      {'http://localhost:8001' if ENABLE_TTS else 'disabled'}")
+            print(f"  TTS:      {tts_display}")
             print("  API Docs: http://localhost:8000/docs")
             print("  Default Login: admin / admin123")
-            print("  To enable TTS: set HAL_ENABLE_TTS=1")
+            if ENABLE_TTS and not INDEXTTS_DIR.exists():
+                print("  Install TTS: git clone https://github.com/index-tts/index-tts.git")
             print("  Press Ctrl+C to stop")
             print("=" * 50 + "\n", flush=True)
     
