@@ -38,11 +38,22 @@ async def lifespan(app: FastAPI):
     from app.services.agent_system import get_agent_system
     from app.services.tool_executor import get_tool_executor
     
-    # Initialize services
+    # Initialize services with logging
+    logger.info("Initializing Ollama client...")
     get_ollama_client()
+    logger.info("Ollama client initialized")
+    
+    logger.info("Initializing RAG engine...")
     get_rag_engine()
+    logger.info("RAG engine initialized")
+    
+    logger.info("Initializing memory system...")
     get_memory_system()
+    logger.info("Memory system initialized")
+    
+    logger.info("Initializing agent system...")
     get_agent_system()
+    logger.info("Agent system initialized")
     
     # Initialize tools in database
     tool_executor = get_tool_executor()
@@ -92,6 +103,7 @@ from app.routers import (
     documents_router, personas_router, memories_router,
     tools_router, alerts_router, admin_router
 )
+from app.routers.tts import router as tts_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -102,6 +114,7 @@ app.include_router(memories_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(tts_router, prefix="/api")
 
 
 # Health check endpoint

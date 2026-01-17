@@ -160,13 +160,15 @@ class RAGEngine:
         for chunk in chunks:
             if chunk.get("embedding"):
                 similarity = self._cosine_similarity(query_embedding, chunk["embedding"])
-                results.append({
-                    "document_id": str(chunk["document_id"]),
-                    "chunk_index": chunk["chunk_index"],
-                    "content": chunk["content"],
-                    "score": similarity,
-                    "metadata": chunk.get("metadata", {})
-                })
+                # Only include results above relevance threshold
+                if similarity > 0.3:  # Minimum relevance threshold
+                    results.append({
+                        "document_id": str(chunk["document_id"]),
+                        "chunk_index": chunk["chunk_index"],
+                        "content": chunk["content"],
+                        "score": similarity,
+                        "metadata": chunk.get("metadata", {})
+                    })
         
         # Sort by similarity and return top results
         results.sort(key=lambda x: x["score"], reverse=True)

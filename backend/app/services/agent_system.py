@@ -5,6 +5,7 @@ from bson import ObjectId
 from datetime import datetime
 import uuid
 import json
+import re
 
 from app.database import database
 from app.config import settings
@@ -15,6 +16,92 @@ from app.services.resource_monitor import get_resource_monitor
 from app.services.tool_executor import ToolExecutor
 
 
+def should_search_documents(message: str) -> bool:
+    """Determine if the message warrants a document search.
+    
+    Returns True for questions, requests for information, or specific topics.
+    Returns False for greetings, personal statements, or casual chat.
+    """
+    message_lower = message.lower().strip()
+    
+    # Skip search for very short messages (likely greetings)
+    if len(message_lower) < 15:
+        return False
+    
+    # Skip search for common greetings and personal statements
+    skip_patterns = [
+        r'^(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening))[\s,!.]*',
+        r'^(my name is|i\'m |i am |call me )',
+        r'^(thanks|thank you|thx)',
+        r'^(bye|goodbye|see you|later)',
+        r'^(how are you|what\'s up|sup)',
+        r'^(yes|no|ok|okay|sure|alright|got it|understood)[\s!.]*$',
+    ]
+    
+    for pattern in skip_patterns:
+        if re.match(pattern, message_lower):
+            return False
+    
+    # Search for questions or information requests
+    search_indicators = [
+        r'\?$',  # Ends with question mark
+        r'^(what|who|where|when|why|how|which|can you|could you|do you|does|did|is|are|was|were)',
+        r'(tell me|explain|describe|show me|find|search|look up|look for)',
+        r'(information|details|about|regarding|concerning)',
+        r'(document|file|report|article|paper)',
+    ]
+    
+    for pattern in search_indicators:
+        if re.search(pattern, message_lower):
+            return True
+    
+    # Default: search if message is substantial (likely a real question)
+    word_count = len(message_lower.split())
+    return word_count >= 5
+
+
+def should_search_memories(message: str) -> bool:
+    """Determine if the message warrants a memory search.
+    
+    Returns True for questions about the user, references to past conversations,
+    or topics that might benefit from personal context.
+    """
+    message_lower = message.lower().strip()
+    
+    # Skip for very short messages
+    if len(message_lower) < 10:
+        return False
+    
+    # Skip common greetings (but NOT personal introductions - we want to check memories for those)
+    skip_patterns = [
+        r'^(hi|hello|hey|howdy|greetings)[\s,!.]*$',
+        r'^(thanks|thank you|thx)',
+        r'^(bye|goodbye|see you)',
+        r'^(yes|no|ok|okay|sure|alright)[\s!.]*$',
+    ]
+    
+    for pattern in skip_patterns:
+        if re.match(pattern, message_lower):
+            return False
+    
+    # Always search memories for personal statements (to avoid re-learning known info)
+    personal_patterns = [
+        r'(my name is|i\'m |i am |call me )',
+        r'(i work|i live|i like|i prefer|i have|i want)',
+        r'(remember|forgot|mentioned|told you|said)',
+    ]
+    
+    for pattern in personal_patterns:
+        if re.search(pattern, message_lower):
+            return True
+    
+    # Search for questions or substantial messages
+    if '?' in message or len(message_lower.split()) >= 4:
+        return True
+    
+    return False
+
+
 class AgentSystem:
     """Main agent system with sub-agent support"""
     
@@ -22,6 +109,26 @@ class AgentSystem:
         self.model = settings.default_chat_model
         self.max_depth = settings.max_agent_depth
         self.tool_executor = ToolExecutor()
+        self._warmed_up = False
+    
+    async def warmup(self) -> bool:
+        """Warm up the model by sending a quick ping - makes first real response faster"""
+        if self._warmed_up:
+            return True
+        
+        try:
+            ollama = get_ollama_client()
+            async for _ in ollama.chat_stream(
+                model=self.model,
+                messages=[{"role": "user", "content": "hi"}],
+                system="Reply with just 'ok'."
+            ):
+                pass
+            self._warmed_up = True
+            return True
+        except Exception as e:
+            print(f"Warmup failed: {e}")
+            return False
     
     async def generate_response(
         self,
@@ -54,7 +161,7 @@ class AgentSystem:
                 result["token_usage"] = chunk["data"].get("token_usage", result["token_usage"])
         
         return result
-    
+
     async def generate_response_stream(
         self,
         chat_id: str,
@@ -74,13 +181,32 @@ class AgentSystem:
         # Build context
         context_parts = []
         
-        # Retrieve relevant memories
+        # Retrieve relevant memories using Mem0 (only if appropriate)
         memory_system = get_memory_system()
-        memories = await memory_system.search_memories(user_id, message, limit=5)
+        memories = []
+        
+        if memory_system.is_available and should_search_memories(message):
+            memories = await memory_system.search_memories(user_id, message, limit=5)
         
         if memories:
             memory_text = "\n".join([f"- {m['content']}" for m in memories])
             context_parts.append(f"Relevant memories about this user:\n{memory_text}")
+            
+            # Send memory usage details to frontend
+            yield {
+                "type": "memories_used",
+                "data": {
+                    "memories": [
+                        {
+                            "id": m["id"],
+                            "content": m["content"],
+                            "score": m.get("score", 0),
+                            "categories": m.get("categories", [])
+                        }
+                        for m in memories
+                    ]
+                }
+            }
             
             yield {
                 "type": "action_complete",
@@ -95,31 +221,36 @@ class AgentSystem:
                 }
             }
         
-        # Search documents if specified
-        if document_ids:
-            rag = get_rag_engine()
-            doc_results = await rag.search(user_id, message, document_ids, limit=3)
-            
-            if doc_results:
-                doc_text = "\n\n".join([
-                    f"From {r['document_name']}:\n{r['content']}"
-                    for r in doc_results
-                ])
-                context_parts.append(f"Relevant document excerpts:\n{doc_text}")
-                
-                yield {
-                    "type": "action_complete",
-                    "data": {
-                        "id": str(uuid.uuid4()),
-                        "type": "rag_search",
-                        "name": "search_documents",
-                        "parameters": {"document_ids": document_ids},
-                        "status": "complete",
-                        "result": f"Found {len(doc_results)} relevant chunks",
-                        "duration_ms": 100
-                    }
-                }
+        # SMART LIBRARY SEARCH - only search when the message warrants it
+        # If specific document_ids provided, always search those; otherwise check if search is appropriate
+        rag = get_rag_engine()
+        doc_results = []
         
+        if document_ids or should_search_documents(message):
+            doc_results = await rag.search(user_id, message, document_ids, limit=5)
+        
+        if doc_results:
+            doc_text = "\n\n".join([
+                f"From '{r['document_name']}' (relevance: {r['score']:.2f}):\n{r['content']}"
+                for r in doc_results
+            ])
+            context_parts.append(f"Relevant excerpts from your documents:\n{doc_text}")
+            
+            # List which documents were searched
+            doc_names = list(set(r['document_name'] for r in doc_results))
+            yield {
+                "type": "action_complete",
+                "data": {
+                    "id": str(uuid.uuid4()),
+                    "type": "rag_search",
+                    "name": "search_library",
+                    "parameters": {"query": message[:100]},
+                    "status": "complete",
+                    "result": f"Found {len(doc_results)} relevant excerpts from: {', '.join(doc_names)}",
+                    "duration_ms": 100
+                }
+            }
+
         # Get chat history
         history = await self._get_chat_history(chat_id, limit=10)
         
@@ -141,9 +272,6 @@ class AgentSystem:
         # Add current message
         messages.append({"role": "user", "content": message})
         
-        # Get available tools
-        tools = await self._get_available_tools(user_id)
-        
         # Generate response
         start_time = datetime.utcnow()
         full_response = ""
@@ -153,8 +281,7 @@ class AgentSystem:
             async for chunk in ollama.chat_stream(
                 model=model,
                 messages=messages,
-                system=system_prompt,
-                tools=tools if tools else None
+                system=system_prompt
             ):
                 if chunk.get("message", {}).get("content"):
                     delta = chunk["message"]["content"]
@@ -177,9 +304,6 @@ class AgentSystem:
         monitor = get_resource_monitor()
         monitor.record_latency(duration_ms)
         
-        # Extract memories from conversation (async, don't block)
-        # This would typically be done in a background task
-        
         yield {
             "type": "done",
             "data": {
@@ -188,7 +312,7 @@ class AgentSystem:
                 "duration_ms": duration_ms
             }
         }
-    
+
     async def _get_system_prompt(self, persona_id: Optional[str], user_id: str) -> str:
         """Get system prompt from persona or default"""
         if persona_id:
@@ -196,9 +320,20 @@ class AgentSystem:
             if persona:
                 return persona["system_prompt"]
         
-        return """You are HAL, a helpful AI assistant. You are running locally and have access to the user's documents and memories to provide personalized assistance.
+        return """You are HAL, a helpful AI assistant running locally. You have access to the user's personal document library and memories.
 
-Be helpful, concise, and accurate. When you don't know something, say so. When using information from documents or memories, cite your sources."""
+Key capabilities:
+- You can search the user's uploaded documents for relevant information when needed
+- You remember important facts about the user from previous conversations
+- All data stays local and private
+
+When answering:
+- For greetings and casual conversation, respond naturally without searching documents
+- If you find relevant information in documents, cite the source (document name)
+- If you recall memories about the user, acknowledge them naturally (e.g., "I remember you mentioned...")
+- Be helpful, concise, and accurate
+- If you don't know something and it's not in the documents, say so honestly
+- When a user shares personal information (like their name), acknowledge it warmly - this information will be automatically remembered for future conversations"""
     
     async def _get_chat_history(self, chat_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent chat history"""
@@ -206,19 +341,12 @@ Be helpful, concise, and accurate. When you don't know something, say so. When u
             {"chat_id": ObjectId(chat_id)}
         ).sort("created_at", -1).limit(limit).to_list(limit)
         
-        # Reverse to chronological order
         messages.reverse()
         
         return [
             {"role": m["role"], "content": m["content"]}
             for m in messages
         ]
-    
-    async def _get_available_tools(self, user_id: str) -> Optional[List[Dict[str, Any]]]:
-        """Get tools available to user"""
-        # For now, return None (no tools)
-        # TODO: Implement tool loading based on user permissions
-        return None
 
 
 # Singleton

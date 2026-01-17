@@ -6,6 +6,10 @@ interface UIState {
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   
+  // Chat list refresh trigger
+  chatListVersion: number;
+  refreshChatList: () => void;
+  
   // Transparency settings (per-session override)
   showThinking: boolean;
   showActions: boolean;
@@ -30,6 +34,10 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  
+  // Chat list refresh - increment version to trigger re-fetch
+  chatListVersion: 0,
+  refreshChatList: () => set((state) => ({ chatListVersion: state.chatListVersion + 1 })),
   
   // Transparency (defaults, will be overridden by user settings)
   showThinking: true,
