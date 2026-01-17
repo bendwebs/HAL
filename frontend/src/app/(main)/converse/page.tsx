@@ -5,27 +5,14 @@ import { useRouter } from 'next/navigation';
 import { chats as chatsApi, messages as messagesApi, tts, personas as personasApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
-import { Settings, ArrowLeft, Volume2, VolumeX, User, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Volume2, VolumeX, ChevronDown, Mic } from 'lucide-react';
 import { Chat, StreamChunk } from '@/types';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 
 // Configuration
-const SILENCE_TIMEOUT = 1500; // Send message after this much silence
-const INTERRUPT_THRESHOLD = 0.15; // Audio level to consider user speaking
-
-// Voice conversation system prompt addition for conversational style
-const VOICE_SYSTEM_PROMPT_ADDITION = `
-
-You are in a voice conversation. Keep these guidelines in mind:
-- Be conversational and engaging - ask follow-up questions to keep the dialogue flowing
-- Keep responses concise (1-3 sentences unless explaining something complex)
-- Show genuine curiosity about what the user shares
-- Don't just answer questions - also share relevant thoughts, ask about their experience, or offer interesting related information
-- Use natural conversational fillers occasionally like "That's interesting..." or "You know what..."
-- If the user gives a short response, ask a thoughtful follow-up question
-- Vary your response patterns - don't always start with "That's great!" or similar
-- Remember context from earlier in the conversation and reference it naturally`;
+const SILENCE_TIMEOUT = 1500;
+const INTERRUPT_THRESHOLD = 0.15;
 
 interface Persona {
   id: string;
@@ -54,9 +41,9 @@ export default function ConversePage() {
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
-  // Audio visualization
+  // Audio visualization - store frequency data for waveform
   const [ttsAudioLevel, setTtsAudioLevel] = useState(0);
-  const [userAudioLevel, setUserAudioLevel] = useState(0);
+  const [frequencyData, setFrequencyData] = useState<number[]>(new Array(64).fill(0));
   const ttsAnalyserRef = useRef<AnalyserNode | null>(null);
   const ttsAnimationRef = useRef<number | null>(null);
   const ttsAudioContextRef = useRef<AudioContext | null>(null);
@@ -70,11 +57,8 @@ export default function ConversePage() {
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastTranscriptRef = useRef('');
   const isProcessingRef = useRef(false);
-  
-  // Interrupt detection
-  const wasListeningRef = useRef(false);
 
-  // Stop AI audio when user starts speaking
+  // Stop AI audio
   const stopAIAudio = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -82,6 +66,7 @@ export default function ConversePage() {
     }
     setIsSpeaking(false);
     setTtsAudioLevel(0);
+    setFrequencyData(new Array(64).fill(0));
     if (ttsAnimationRef.current) {
       cancelAnimationFrame(ttsAnimationRef.current);
     }
@@ -93,7 +78,6 @@ export default function ConversePage() {
 
     isProcessingRef.current = true;
     setIsProcessing(true);
-    
     setCaption(content);
     setCaptionType('user');
 
@@ -121,7 +105,7 @@ export default function ConversePage() {
     } catch (err) {
       console.error('Failed to send message:', err);
       toast.error('Failed to get response');
-      setCaption('Sorry, I encountered an error. Please try again.');
+      setCaption('Sorry, I encountered an error.');
       setCaptionType('assistant');
     } finally {
       isProcessingRef.current = false;
@@ -129,10 +113,9 @@ export default function ConversePage() {
     }
   }, [chat, ttsEnabled]);
 
-  // Handle speech result with interrupt detection
+  // Handle speech result
   const handleSpeechResult = useCallback((transcript: string, isFinal: boolean) => {
-    // If AI is speaking and user starts talking, interrupt
-    if (isSpeaking && userAudioLevel > INTERRUPT_THRESHOLD) {
+    if (isSpeaking && audioLevel > INTERRUPT_THRESHOLD) {
       stopAIAudio();
     }
     
@@ -149,9 +132,7 @@ export default function ConversePage() {
       });
       setCaptionType('user');
       
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-      }
+      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
       
       silenceTimeoutRef.current = setTimeout(() => {
         const textToSend = lastTranscriptRef.current.trim();
@@ -166,7 +147,7 @@ export default function ConversePage() {
       setCaption(currentText + (currentText ? ' ' : '') + transcript);
       setCaptionType('user');
     }
-  }, [sendMessage, captionType, isSpeaking, userAudioLevel, stopAIAudio]);
+  }, [sendMessage, captionType, isSpeaking, stopAIAudio]);
 
   const {
     isListening,
@@ -188,17 +169,26 @@ export default function ConversePage() {
     },
   });
 
-  // Update user audio level for visualization
+  // Update frequency data for user audio (simulated from level)
   useEffect(() => {
-    setUserAudioLevel(audioLevel);
-    
-    // Check for interrupt
+    if (isListening && !isSpeaking) {
+      // Generate simulated frequency data from audio level
+      const newData = new Array(64).fill(0).map((_, i) => {
+        const wave = Math.sin(i * 0.3 + Date.now() * 0.005) * 0.3 + 0.7;
+        return audioLevel * wave * (0.5 + Math.random() * 0.5);
+      });
+      setFrequencyData(newData);
+    }
+  }, [audioLevel, isListening, isSpeaking]);
+
+  // Check for interrupt
+  useEffect(() => {
     if (isListening && isSpeaking && audioLevel > INTERRUPT_THRESHOLD) {
       stopAIAudio();
     }
   }, [audioLevel, isListening, isSpeaking, stopAIAudio]);
 
-  // Load personas on mount
+  // Load personas
   useEffect(() => {
     loadPersonas();
   }, []);
@@ -212,31 +202,22 @@ export default function ConversePage() {
     }
   };
 
-  // Initialize chat - only once on mount
+  // Initialize chat
   useEffect(() => {
     const initializeChat = async () => {
       try {
         setIsLoading(true);
-        
-        // Try to find a recent voice conversation to reuse (within last hour)
         const existingChats = await chatsApi.list(false, false);
         const recentVoiceChat = existingChats.find((c: any) => 
           c.title === 'Voice Conversation' && 
           c.is_owner &&
-          // Created within last hour
           new Date(c.updated_at).getTime() > Date.now() - 60 * 60 * 1000
         );
         
         if (recentVoiceChat) {
-          // Reuse existing voice chat
           setChat(recentVoiceChat as Chat);
         } else {
-          // Create new voice chat
-          const newChat = await chatsApi.create({ 
-            title: 'Voice Conversation',
-          });
-          
-          // Enable voice mode for conversational responses
+          const newChat = await chatsApi.create({ title: 'Voice Conversation' });
           await chatsApi.update(newChat.id, { tts_enabled: true, voice_mode: true } as any);
           setChat(newChat);
         }
@@ -251,7 +232,6 @@ export default function ConversePage() {
     
     initializeChat();
     
-    // Cleanup on unmount
     return () => {
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
       if (audioRef.current) audioRef.current.pause();
@@ -260,12 +240,10 @@ export default function ConversePage() {
         ttsAudioContextRef.current?.close();
       }
     };
-  }, []); // Empty deps - only run once
+  }, []);
 
-  // Ref to hold the latest handleMicToggle without causing re-renders
   const handleMicToggleRef = useRef<() => void>(() => {});
 
-  // Toggle mic function
   const handleMicToggle = useCallback(() => {
     if (isListening) {
       stopListening();
@@ -276,7 +254,6 @@ export default function ConversePage() {
         lastTranscriptRef.current = '';
       }
     } else {
-      // If AI is speaking, stop it
       if (isSpeaking) stopAIAudio();
       resetTranscript();
       setUserInput('');
@@ -286,12 +263,10 @@ export default function ConversePage() {
     }
   }, [isListening, stopListening, userInput, sendMessage, isSpeaking, stopAIAudio, resetTranscript, startListening]);
 
-  // Keep ref updated
   useEffect(() => {
     handleMicToggleRef.current = handleMicToggle;
   }, [handleMicToggle]);
 
-  // Keyboard listener - separate effect using ref
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat && document.activeElement?.tagName !== 'INPUT') {
@@ -299,16 +274,13 @@ export default function ConversePage() {
         handleMicToggleRef.current();
       }
     };
-    
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []); // Empty deps - listener uses ref
+  }, []);
 
-  // Update chat when persona changes
   const handlePersonaChange = async (persona: Persona | null) => {
     setSelectedPersona(persona);
     setShowPersonaMenu(false);
-    
     if (chat) {
       try {
         await chatsApi.update(chat.id, { persona_id: persona?.id || null });
@@ -319,10 +291,8 @@ export default function ConversePage() {
     }
   };
 
-  // Play TTS with interrupt support
   const playTTS = async (text: string) => {
     if (!ttsEnabled || !text.trim()) return;
-
     setIsSpeaking(true);
     
     try {
@@ -331,7 +301,6 @@ export default function ConversePage() {
       const audio = new Audio(url);
       audioRef.current = audio;
       
-      // Setup audio analyzer for visualization
       try {
         if (ttsAudioContextRef.current?.state !== 'closed') {
           await ttsAudioContextRef.current?.close();
@@ -342,8 +311,8 @@ export default function ConversePage() {
         
         const source = audioContext.createMediaElementSource(audio);
         const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.8;
+        analyser.fftSize = 128;
+        analyser.smoothingTimeConstant = 0.7;
         
         source.connect(analyser);
         analyser.connect(audioContext.destination);
@@ -356,6 +325,11 @@ export default function ConversePage() {
             ttsAnalyserRef.current.getByteFrequencyData(dataArray);
             const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
             setTtsAudioLevel(Math.min(1, average / 128));
+            
+            // Convert to normalized array for visualization
+            const normalized = Array.from(dataArray).map(v => v / 255);
+            setFrequencyData(normalized);
+            
             ttsAnimationRef.current = requestAnimationFrame(updateLevel);
           }
         };
@@ -367,6 +341,7 @@ export default function ConversePage() {
       audio.onended = () => {
         setIsSpeaking(false);
         setTtsAudioLevel(0);
+        setFrequencyData(new Array(64).fill(0));
         if (ttsAnimationRef.current) cancelAnimationFrame(ttsAnimationRef.current);
         URL.revokeObjectURL(url);
       };
@@ -384,43 +359,39 @@ export default function ConversePage() {
     }
   };
 
-  // Toggle TTS
   const handleTTSToggle = () => {
     setTtsEnabled(!ttsEnabled);
-    if (audioRef.current && ttsEnabled) {
-      stopAIAudio();
-    }
+    if (audioRef.current && ttsEnabled) stopAIAudio();
   };
 
-  // Current audio level for visualization
   const currentAudioLevel = isSpeaking ? ttsAudioLevel : audioLevel;
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center bg-gradient-to-b from-slate-900 via-purple-900/20 to-slate-900">
+      <div className="h-full flex items-center justify-center bg-[#0a0a1a]">
         <div className="text-center">
-          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <span className="text-4xl">🎙️</span>
-          </div>
-          <p className="text-gray-400">Starting voice conversation...</p>
+          <GlowingRing audioLevel={0} isActive={false} isProcessing={true} />
+          <p className="text-gray-400 mt-6">Starting voice conversation...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-b from-slate-900 via-purple-900/20 to-slate-900 overflow-hidden">
+    <div className="h-full flex flex-col bg-[#0a0a1a] overflow-hidden">
+      {/* Gradient background overlay */}
+      <div className="absolute inset-0 bg-gradient-to-b from-purple-900/10 via-transparent to-purple-900/20 pointer-events-none" />
+      
       {/* Header */}
-      <header className="h-14 flex items-center justify-between px-4 border-b border-white/10 bg-black/30 backdrop-blur-sm">
+      <header className="relative z-10 h-14 flex items-center justify-between px-4 bg-black/20 backdrop-blur-sm border-b border-white/5">
         <div className="flex items-center gap-3">
           <Link href="/chat" className="p-2 hover:bg-white/10 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5 text-gray-400" />
           </Link>
-          <h1 className="font-semibold text-white">Voice Mode</h1>
+          <h1 className="font-medium text-white/90">Voice Mode</h1>
         </div>
         
         <div className="flex items-center gap-2">
-          {/* Persona selector */}
           <div className="relative">
             <button
               onClick={() => setShowPersonaMenu(!showPersonaMenu)}
@@ -434,7 +405,7 @@ export default function ConversePage() {
             </button>
             
             {showPersonaMenu && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-slate-800 rounded-xl shadow-xl border border-white/10 py-2 z-50">
+              <div className="absolute right-0 top-full mt-2 w-64 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-white/10 py-2 z-50">
                 <button
                   onClick={() => handlePersonaChange(null)}
                   className={`w-full px-4 py-2 text-left hover:bg-white/10 flex items-center gap-3 ${!selectedPersona ? 'bg-white/5' : ''}`}
@@ -465,79 +436,62 @@ export default function ConversePage() {
           <button
             onClick={handleTTSToggle}
             className={`p-2 rounded-lg transition-colors ${ttsEnabled ? 'bg-purple-500/20 text-purple-400' : 'text-gray-500 hover:bg-white/10'}`}
-            title={ttsEnabled ? 'Disable voice' : 'Enable voice'}
           >
             {ttsEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
           </button>
         </div>
       </header>
 
-      {/* Main visualization area */}
-      <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
-        {/* Large circular visualizer */}
+      {/* Main content */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-4">
+        {/* Glowing Ring Visualizer */}
         <button
           onClick={handleMicToggle}
           disabled={isProcessing}
-          className="relative group cursor-pointer disabled:cursor-not-allowed transition-transform hover:scale-[1.02] active:scale-[0.98]"
+          className="relative focus:outline-none"
         >
-          {/* Outer glow ring */}
-          <div className={`absolute inset-0 rounded-full transition-all duration-500 ${
-            isListening 
-              ? 'bg-blue-500/20 shadow-[0_0_60px_20px_rgba(59,130,246,0.3)]' 
-              : isSpeaking 
-              ? 'bg-pink-500/20 shadow-[0_0_60px_20px_rgba(236,72,153,0.3)]'
-              : isProcessing
-              ? 'bg-purple-500/20 shadow-[0_0_40px_15px_rgba(139,92,246,0.2)] animate-pulse'
-              : 'bg-gray-800/50'
-          }`} style={{ transform: `scale(${1 + currentAudioLevel * 0.3})` }} />
-          
-          {/* Main circle */}
-          <div className={`relative w-48 h-48 sm:w-64 sm:h-64 md:w-80 md:h-80 rounded-full flex items-center justify-center transition-all duration-300 ${
-            isListening 
-              ? 'bg-gradient-to-br from-blue-600 to-cyan-500' 
-              : isSpeaking 
-              ? 'bg-gradient-to-br from-pink-600 to-purple-500'
-              : isProcessing
-              ? 'bg-gradient-to-br from-purple-600 to-indigo-500'
-              : 'bg-gradient-to-br from-gray-700 to-gray-800 group-hover:from-gray-600 group-hover:to-gray-700'
-          }`}>
-            {/* Inner visualization */}
-            <div className="absolute inset-4 rounded-full overflow-hidden">
-              <VoiceVisualizer 
-                audioLevel={currentAudioLevel} 
-                isActive={isListening || isSpeaking}
-                isAI={isSpeaking}
-                isProcessing={isProcessing}
-              />
-            </div>
-            
-            {/* Center icon/emoji */}
-            <div className={`relative z-10 text-6xl sm:text-7xl md:text-8xl transition-transform ${
-              isListening || isSpeaking ? 'scale-110' : ''
-            }`}>
-              {selectedPersona?.avatar_emoji || (isProcessing ? '💭' : isSpeaking ? '🗣️' : '🎙️')}
-            </div>
-          </div>
+          <GlowingRing 
+            audioLevel={currentAudioLevel}
+            isActive={isListening || isSpeaking}
+            isProcessing={isProcessing}
+            isAI={isSpeaking}
+            isListening={isListening}
+          />
         </button>
-        
+
         {/* Status text */}
-        <div className="mt-6 text-center">
-          <p className={`text-lg sm:text-xl font-medium transition-colors ${
-            isListening ? 'text-blue-400' : isSpeaking ? 'text-pink-400' : isProcessing ? 'text-purple-400' : 'text-gray-400'
-          }`}>
-            {isListening ? 'Listening...' : isSpeaking ? 'Speaking...' : isProcessing ? 'Thinking...' : 'Tap to speak'}
-          </p>
-          
-          {/* Caption display */}
-          {caption && (
-            <p className={`mt-4 text-base sm:text-lg max-w-2xl mx-auto leading-relaxed transition-colors ${
-              captionType === 'user' ? 'text-blue-300' : captionType === 'assistant' ? 'text-pink-300' : 'text-gray-400'
+        <p className={`mt-8 text-xl font-light tracking-wide transition-colors ${
+          isListening ? 'text-cyan-400' 
+          : isSpeaking ? 'text-purple-400' 
+          : isProcessing ? 'text-purple-300'
+          : 'text-gray-400'
+        }`}>
+          {isListening ? "I'm listening..." 
+           : isSpeaking ? 'Speaking...' 
+           : isProcessing ? 'Thinking...' 
+           : 'Tap to speak'}
+        </p>
+
+        {/* Waveform Visualizer */}
+        <div className="mt-8 w-full max-w-lg">
+          <WaveformVisualizer 
+            frequencyData={frequencyData}
+            isActive={isListening || isSpeaking}
+            isAI={isSpeaking}
+          />
+        </div>
+
+        {/* Caption display */}
+        {caption && (
+          <div className="mt-6 max-w-2xl text-center">
+            <p className={`text-base leading-relaxed ${
+              captionType === 'user' ? 'text-cyan-300/80' : 'text-purple-300/80'
             }`}>
               {caption}
             </p>
-          )}
-        </div>
-        
+          </div>
+        )}
+
         {/* Error display */}
         {speechError && !speechError.includes('No speech detected') && (
           <div className="mt-4 text-red-400 text-sm bg-red-500/10 px-4 py-2 rounded-lg">
@@ -546,28 +500,42 @@ export default function ConversePage() {
         )}
       </div>
 
-      {/* Footer hint */}
-      <footer className="p-4 text-center">
-        <p className="text-gray-500 text-xs">
-          {isListening ? 'Speak naturally • Pausing will send your message' : 'Click the circle or press space to start'}
-        </p>
-      </footer>
+      {/* Bottom input bar (visual only for now) */}
+      <div className="relative z-10 p-4">
+        <div className="max-w-lg mx-auto flex items-center gap-3 bg-white/5 backdrop-blur-sm rounded-full px-4 py-3 border border-white/10">
+          <div className="flex-1 text-gray-500 text-sm">
+            {isListening ? 'Listening...' : 'Press space or tap circle to speak'}
+          </div>
+          <button
+            onClick={handleMicToggle}
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+              isListening 
+                ? 'bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-purple-500/30' 
+                : 'bg-purple-600 hover:bg-purple-500'
+            }`}
+          >
+            <Mic className="w-5 h-5 text-white" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 
-// Voice visualizer component - shows audio-reactive bars inside the circle
-function VoiceVisualizer({ 
+// Glowing Ring Component - inspired by first image
+function GlowingRing({ 
   audioLevel, 
   isActive, 
-  isAI,
-  isProcessing 
+  isProcessing,
+  isAI = false,
+  isListening = false
 }: { 
-  audioLevel: number; 
+  audioLevel: number;
   isActive: boolean;
-  isAI: boolean;
   isProcessing: boolean;
+  isAI?: boolean;
+  isListening?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
@@ -581,74 +549,95 @@ function VoiceVisualizer({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const size = 280;
+    canvas.width = size;
+    canvas.height = size;
+    
+    const centerX = size / 2;
+    const centerY = size / 2;
+    const baseRadius = 90;
+
     const draw = () => {
-      const width = canvas.width;
-      const height = canvas.height;
-      const centerX = width / 2;
-      const centerY = height / 2;
-      const radius = Math.min(width, height) / 2;
-
+      ctx.clearRect(0, 0, size, size);
+      
       // Smooth audio level
-      smoothedLevelRef.current += (audioLevel - smoothedLevelRef.current) * 0.3;
+      smoothedLevelRef.current += (audioLevel - smoothedLevelRef.current) * 0.15;
       const level = smoothedLevelRef.current;
+      
+      // Determine colors based on state
+      let primaryColor = 'rgba(139, 92, 246, '; // purple
+      let secondaryColor = 'rgba(79, 70, 229, '; // indigo
+      let glowColor = 'rgba(139, 92, 246, ';
+      
+      if (isListening) {
+        primaryColor = 'rgba(6, 182, 212, '; // cyan
+        secondaryColor = 'rgba(139, 92, 246, '; // purple
+        glowColor = 'rgba(6, 182, 212, ';
+      } else if (isAI) {
+        primaryColor = 'rgba(168, 85, 247, '; // purple
+        secondaryColor = 'rgba(236, 72, 153, '; // pink
+        glowColor = 'rgba(168, 85, 247, ';
+      }
 
-      ctx.clearRect(0, 0, width, height);
+      // Outer glow layers
+      const glowLayers = 4;
+      for (let i = glowLayers; i >= 0; i--) {
+        const glowRadius = baseRadius + 20 + i * 15 + level * 30;
+        const alpha = (0.03 + level * 0.05) * (1 - i / glowLayers);
+        
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, glowRadius, 0, Math.PI * 2);
+        ctx.fillStyle = glowColor + alpha + ')';
+        ctx.fill();
+      }
 
-      if (isProcessing) {
-        // Processing: rotating dots
-        const dots = 12;
-        for (let i = 0; i < dots; i++) {
-          const angle = (i / dots) * Math.PI * 2 + phaseRef.current * 3;
-          const dist = radius * 0.6;
-          const x = centerX + Math.cos(angle) * dist;
-          const y = centerY + Math.sin(angle) * dist;
-          const size = 4 + Math.sin(phaseRef.current * 4 + i * 0.5) * 2;
+      // Main ring with gradient
+      const ringWidth = 4 + level * 6;
+      const ringRadius = baseRadius + level * 15;
+      
+      // Create gradient for ring
+      const gradient = ctx.createLinearGradient(
+        centerX - ringRadius, centerY - ringRadius,
+        centerX + ringRadius, centerY + ringRadius
+      );
+      gradient.addColorStop(0, primaryColor + '0.9)');
+      gradient.addColorStop(0.5, secondaryColor + '0.9)');
+      gradient.addColorStop(1, primaryColor + '0.9)');
+
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = ringWidth;
+      ctx.stroke();
+
+      // Animated particles/dots around ring when active
+      if (isActive || isProcessing) {
+        const particleCount = isProcessing ? 8 : 16;
+        const particleSpeed = isProcessing ? 2 : 1;
+        
+        for (let i = 0; i < particleCount; i++) {
+          const angle = (i / particleCount) * Math.PI * 2 + phaseRef.current * particleSpeed;
+          const particleRadius = ringRadius + 15 + Math.sin(angle * 3 + phaseRef.current * 2) * (5 + level * 10);
+          
+          const x = centerX + Math.cos(angle) * particleRadius;
+          const y = centerY + Math.sin(angle) * particleRadius;
+          
+          const particleSize = 2 + level * 3 + Math.sin(phaseRef.current * 3 + i) * 1;
+          const particleAlpha = 0.4 + level * 0.4 + Math.sin(phaseRef.current * 2 + i * 0.5) * 0.2;
           
           ctx.beginPath();
-          ctx.arc(x, y, size, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(168, 85, 247, ${0.5 + Math.sin(phaseRef.current * 4 + i * 0.5) * 0.3})`;
+          ctx.arc(x, y, particleSize, 0, Math.PI * 2);
+          ctx.fillStyle = primaryColor + particleAlpha + ')';
           ctx.fill();
         }
-      } else if (isActive) {
-        // Active: audio-reactive bars in a circle
-        const bars = 32;
-        for (let i = 0; i < bars; i++) {
-          const angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
-          
-          // Create wave pattern
-          const wave1 = Math.sin(i * 0.5 + phaseRef.current * 4) * 0.3;
-          const wave2 = Math.sin(i * 0.3 + phaseRef.current * 2) * 0.2;
-          const barLevel = Math.max(0.1, level * (1 + wave1 + wave2));
-          
-          const innerRadius = radius * 0.3;
-          const outerRadius = innerRadius + (radius * 0.5) * barLevel;
-          
-          const x1 = centerX + Math.cos(angle) * innerRadius;
-          const y1 = centerY + Math.sin(angle) * innerRadius;
-          const x2 = centerX + Math.cos(angle) * outerRadius;
-          const y2 = centerY + Math.sin(angle) * outerRadius;
-          
-          ctx.beginPath();
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(x2, y2);
-          ctx.lineWidth = 4;
-          ctx.lineCap = 'round';
-          
-          if (isAI) {
-            ctx.strokeStyle = `rgba(236, 72, 153, ${0.6 + barLevel * 0.4})`;
-          } else {
-            ctx.strokeStyle = `rgba(59, 130, 246, ${0.6 + barLevel * 0.4})`;
-          }
-          ctx.stroke();
-        }
-      } else {
-        // Idle: subtle ambient ring
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius * 0.5, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
       }
+
+      // Inner subtle ring
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, baseRadius - 20, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
 
       phaseRef.current += 0.02;
       animationRef.current = requestAnimationFrame(draw);
@@ -656,14 +645,157 @@ function VoiceVisualizer({
 
     draw();
     return () => cancelAnimationFrame(animationRef.current);
-  }, [audioLevel, isActive, isAI, isProcessing]);
+  }, [audioLevel, isActive, isProcessing, isAI, isListening]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={300}
-      height={300}
-      className="w-full h-full"
+    <div className="relative cursor-pointer group">
+      <canvas 
+        ref={canvasRef} 
+        className="w-[280px] h-[280px] transition-transform group-hover:scale-105 group-active:scale-95"
+      />
+    </div>
+  );
+}
+
+
+// Waveform Visualizer Component - inspired by second image
+function WaveformVisualizer({ 
+  frequencyData, 
+  isActive,
+  isAI = false
+}: { 
+  frequencyData: number[];
+  isActive: boolean;
+  isAI: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number>(0);
+  const phaseRef = useRef(0);
+  const smoothedDataRef = useRef<number[]>(new Array(64).fill(0));
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = 500;
+    const height = 120;
+    canvas.width = width;
+    canvas.height = height;
+
+    const draw = () => {
+      ctx.clearRect(0, 0, width, height);
+      
+      // Smooth the frequency data
+      for (let i = 0; i < smoothedDataRef.current.length; i++) {
+        const target = frequencyData[i] || 0;
+        smoothedDataRef.current[i] += (target - smoothedDataRef.current[i]) * 0.2;
+      }
+      
+      const data = smoothedDataRef.current;
+      const centerY = height / 2;
+      
+      // Determine colors
+      let color1 = isAI ? 'rgba(168, 85, 247, ' : 'rgba(6, 182, 212, '; // purple or cyan
+      let color2 = isAI ? 'rgba(236, 72, 153, ' : 'rgba(139, 92, 246, '; // pink or purple
+
+      // Create flowing wave effect
+      const points: { x: number; y: number }[] = [];
+      const segments = 64;
+      
+      for (let i = 0; i <= segments; i++) {
+        const x = (i / segments) * width;
+        const dataIndex = Math.floor((i / segments) * data.length);
+        const amplitude = (data[dataIndex] || 0) * 40;
+        
+        // Add wave motion
+        const wave1 = Math.sin(i * 0.15 + phaseRef.current * 2) * 5;
+        const wave2 = Math.sin(i * 0.08 + phaseRef.current * 1.5) * 8;
+        
+        const baseAmplitude = isActive ? amplitude + wave1 + wave2 : wave1 * 0.3;
+        
+        points.push({ x, y: centerY - baseAmplitude });
+      }
+
+      // Draw gradient fill for upper wave
+      const gradient = ctx.createLinearGradient(0, 0, width, 0);
+      gradient.addColorStop(0, color1 + '0.1)');
+      gradient.addColorStop(0.3, color2 + '0.3)');
+      gradient.addColorStop(0.5, color1 + '0.4)');
+      gradient.addColorStop(0.7, color2 + '0.3)');
+      gradient.addColorStop(1, color1 + '0.1)');
+
+      // Upper wave fill
+      ctx.beginPath();
+      ctx.moveTo(0, centerY);
+      points.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.lineTo(width, centerY);
+      ctx.closePath();
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      // Lower wave (mirrored)
+      ctx.beginPath();
+      ctx.moveTo(0, centerY);
+      points.forEach(p => ctx.lineTo(p.x, centerY + (centerY - p.y)));
+      ctx.lineTo(width, centerY);
+      ctx.closePath();
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      // Draw the main wave lines
+      const lineGradient = ctx.createLinearGradient(0, 0, width, 0);
+      lineGradient.addColorStop(0, color1 + '0.3)');
+      lineGradient.addColorStop(0.5, color2 + '0.8)');
+      lineGradient.addColorStop(1, color1 + '0.3)');
+
+      // Upper line
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        const xc = (points[i].x + points[i - 1].x) / 2;
+        const yc = (points[i].y + points[i - 1].y) / 2;
+        ctx.quadraticCurveTo(points[i - 1].x, points[i - 1].y, xc, yc);
+      }
+      ctx.strokeStyle = lineGradient;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Lower line (mirrored)
+      ctx.beginPath();
+      const mirroredPoints = points.map(p => ({ x: p.x, y: centerY + (centerY - p.y) }));
+      ctx.moveTo(mirroredPoints[0].x, mirroredPoints[0].y);
+      for (let i = 1; i < mirroredPoints.length; i++) {
+        const xc = (mirroredPoints[i].x + mirroredPoints[i - 1].x) / 2;
+        const yc = (mirroredPoints[i].y + mirroredPoints[i - 1].y) / 2;
+        ctx.quadraticCurveTo(mirroredPoints[i - 1].x, mirroredPoints[i - 1].y, xc, yc);
+      }
+      ctx.strokeStyle = lineGradient;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Center line
+      ctx.beginPath();
+      ctx.moveTo(0, centerY);
+      ctx.lineTo(width, centerY);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      phaseRef.current += 0.03;
+      animationRef.current = requestAnimationFrame(draw);
+    };
+
+    draw();
+    return () => cancelAnimationFrame(animationRef.current);
+  }, [frequencyData, isActive, isAI]);
+
+  return (
+    <canvas 
+      ref={canvasRef} 
+      className="w-full h-[120px] opacity-80"
     />
   );
 }
