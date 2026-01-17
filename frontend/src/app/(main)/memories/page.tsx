@@ -21,9 +21,17 @@ interface Memory {
 }
 
 interface DuplicateGroup {
+  type: string;
   memories: Array<{ id: string; content: string }>;
   similarity: number;
   suggested_merge: string;
+  reason: string;
+}
+
+interface LowValueMemory {
+  id: string;
+  content: string;
+  reason: string;
 }
 
 export default function MemoriesPage() {
@@ -41,9 +49,12 @@ export default function MemoriesPage() {
   const [showConsolidateModal, setShowConsolidateModal] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
-  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
+  const [relatedGroups, setRelatedGroups] = useState<DuplicateGroup[]>([]);
+  const [lowValueMemories, setLowValueMemories] = useState<LowValueMemory[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [similarityThreshold, setSimilarityThreshold] = useState(0.85);
-  const [mergeContent, setMergeContent] = useState<Record<number, string>>({});
+  const [mergeContent, setMergeContent] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<'duplicates' | 'related' | 'lowvalue'>('duplicates');
 
   useEffect(() => {
     loadMemories();
@@ -197,18 +208,36 @@ export default function MemoriesPage() {
   const analyzeForDuplicates = async () => {
     setIsAnalyzing(true);
     try {
-      const result = await memories.consolidate(similarityThreshold, true);
+      const result = await memories.consolidate(similarityThreshold, true, true);
       setDuplicateGroups(result.groups || []);
+      setRelatedGroups(result.related || []);
+      setLowValueMemories(result.low_value || []);
       setExpandedGroups(new Set());
+      
       // Initialize merge content with suggestions
-      const initialMerge: Record<number, string> = {};
+      const initialMerge: Record<string, string> = {};
       result.groups?.forEach((g, i) => {
-        initialMerge[i] = g.suggested_merge;
+        initialMerge[`dup-${i}`] = g.suggested_merge;
+      });
+      result.related?.forEach((g, i) => {
+        initialMerge[`rel-${i}`] = g.suggested_merge;
       });
       setMergeContent(initialMerge);
       
-      if (result.groups?.length === 0) {
-        toast.success('No duplicates found!');
+      // Set active tab based on what was found
+      if ((result.groups?.length || 0) > 0) {
+        setActiveTab('duplicates');
+      } else if ((result.related?.length || 0) > 0) {
+        setActiveTab('related');
+      } else if ((result.low_value?.length || 0) > 0) {
+        setActiveTab('lowvalue');
+      }
+      
+      const total = (result.groups?.length || 0) + (result.related?.length || 0) + (result.low_value?.length || 0);
+      if (total === 0) {
+        toast.success('No issues found - memories look good!');
+      } else {
+        toast.success(`Found ${total} items to review`);
       }
     } catch (err) {
       console.error('Failed to analyze memories:', err);
@@ -218,26 +247,31 @@ export default function MemoriesPage() {
     }
   };
 
-  const toggleGroupExpanded = (index: number) => {
+  const toggleGroupExpanded = (key: string) => {
     const newExpanded = new Set(expandedGroups);
-    if (newExpanded.has(index)) {
-      newExpanded.delete(index);
+    if (newExpanded.has(key)) {
+      newExpanded.delete(key);
     } else {
-      newExpanded.add(index);
+      newExpanded.add(key);
     }
     setExpandedGroups(newExpanded);
   };
 
-  const handleMergeGroup = async (groupIndex: number) => {
-    const group = duplicateGroups[groupIndex];
-    const content = mergeContent[groupIndex] || group.suggested_merge;
+  const handleMergeGroup = async (groupKey: string, group: DuplicateGroup) => {
+    const content = mergeContent[groupKey] || group.suggested_merge;
     
     try {
       const memoryIds = group.memories.map(m => m.id);
       await memories.merge(memoryIds, content);
       
       // Remove this group and refresh
-      setDuplicateGroups(prev => prev.filter((_, i) => i !== groupIndex));
+      if (groupKey.startsWith('dup-')) {
+        const idx = parseInt(groupKey.split('-')[1]);
+        setDuplicateGroups(prev => prev.filter((_, i) => i !== idx));
+      } else {
+        const idx = parseInt(groupKey.split('-')[1]);
+        setRelatedGroups(prev => prev.filter((_, i) => i !== idx));
+      }
       loadMemories();
       toast.success('Memories merged successfully');
     } catch (err) {
@@ -264,9 +298,10 @@ export default function MemoriesPage() {
             onClick={async () => {
               toast.dismiss(t.id);
               try {
-                const result = await memories.consolidate(similarityThreshold, false);
+                const result = await memories.consolidate(similarityThreshold, false, false);
                 toast.success(`Deleted ${result.deleted || 0} duplicate memories`);
                 setDuplicateGroups([]);
+                setRelatedGroups([]);
                 setShowConsolidateModal(false);
                 loadMemories();
               } catch (err) {
@@ -277,6 +312,53 @@ export default function MemoriesPage() {
             className="px-3 py-1.5 text-sm bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
           >
             Consolidate
+          </button>
+        </div>
+      </div>
+    ), { duration: Infinity });
+  };
+
+  const handleDeleteLowValue = async (id: string) => {
+    try {
+      await memories.delete(id);
+      setLowValueMemories(prev => prev.filter(m => m.id !== id));
+      loadMemories();
+      toast.success('Memory removed');
+    } catch (err) {
+      console.error('Failed to delete memory:', err);
+      toast.error('Failed to delete memory');
+    }
+  };
+
+  const handleDeleteAllLowValue = async () => {
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <p className="font-medium">Delete all {lowValueMemories.length} low-value memories?</p>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1.5 text-sm bg-surface hover:bg-bg-tertiary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                for (const mem of lowValueMemories) {
+                  await memories.delete(mem.id);
+                }
+                toast.success(`Deleted ${lowValueMemories.length} low-value memories`);
+                setLowValueMemories([]);
+                loadMemories();
+              } catch (err) {
+                console.error('Failed to delete:', err);
+                toast.error('Failed to delete memories');
+              }
+            }}
+            className="px-3 py-1.5 text-sm bg-error hover:bg-error/80 text-white rounded-lg transition-colors"
+          >
+            Delete All
           </button>
         </div>
       </div>
@@ -302,6 +384,9 @@ export default function MemoriesPage() {
                 onClick={() => {
                   setShowConsolidateModal(true);
                   setDuplicateGroups([]);
+                  setRelatedGroups([]);
+                  setLowValueMemories([]);
+                  setActiveTab('duplicates');
                 }}
                 className="flex items-center gap-2 px-3 py-2 text-accent hover:bg-accent/10 rounded-lg transition-colors"
                 title="Find and merge duplicate memories"
@@ -590,7 +675,7 @@ export default function MemoriesPage() {
               </div>
 
               {/* Analyze button */}
-              {duplicateGroups.length === 0 && (
+              {duplicateGroups.length === 0 && relatedGroups.length === 0 && lowValueMemories.length === 0 && (
                 <button
                   onClick={analyzeForDuplicates}
                   disabled={isAnalyzing}
@@ -610,84 +695,232 @@ export default function MemoriesPage() {
                 </button>
               )}
 
-              {/* Results */}
-              {duplicateGroups.length > 0 && (
+              {/* Results with tabs */}
+              {(duplicateGroups.length > 0 || relatedGroups.length > 0 || lowValueMemories.length > 0) && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-text-secondary">
-                      Found {duplicateGroups.length} groups with {duplicateGroups.reduce((sum, g) => sum + g.memories.length, 0)} similar memories
-                    </p>
+                  {/* Tabs */}
+                  <div className="flex gap-1 p-1 bg-surface rounded-lg">
                     <button
-                      onClick={handleAutoConsolidate}
-                      className="flex items-center gap-2 px-3 py-1.5 text-sm bg-accent/10 hover:bg-accent/20 text-accent rounded-lg transition-colors"
+                      onClick={() => setActiveTab('duplicates')}
+                      className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${
+                        activeTab === 'duplicates' 
+                          ? 'bg-accent text-white' 
+                          : 'text-text-secondary hover:text-text-primary'
+                      }`}
                     >
-                      <Zap className="w-3 h-3" />
-                      Auto-consolidate All
+                      Duplicates ({duplicateGroups.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('related')}
+                      className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${
+                        activeTab === 'related' 
+                          ? 'bg-accent text-white' 
+                          : 'text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      Related ({relatedGroups.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('lowvalue')}
+                      className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${
+                        activeTab === 'lowvalue' 
+                          ? 'bg-error text-white' 
+                          : 'text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      Low Value ({lowValueMemories.length})
                     </button>
                   </div>
 
-                  {duplicateGroups.map((group, index) => (
-                    <div key={index} className="border border-border rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleGroupExpanded(index)}
-                        className="w-full flex items-center justify-between p-4 bg-surface hover:bg-surface-hover transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          {expandedGroups.has(index) ? (
-                            <ChevronDown className="w-4 h-4 text-text-muted" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4 text-text-muted" />
-                          )}
-                          <span className="text-text-primary font-medium">
-                            {group.memories.length} similar memories
-                          </span>
-                          <span className="text-xs px-2 py-0.5 bg-accent/10 text-accent rounded-full">
-                            {Math.round(group.similarity * 100)}% similar
-                          </span>
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleMergeGroup(index);
-                          }}
-                          className="flex items-center gap-1 px-3 py-1 text-sm bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
-                        >
-                          <Merge className="w-3 h-3" />
-                          Merge
-                        </button>
-                      </button>
-
-                      {expandedGroups.has(index) && (
-                        <div className="p-4 border-t border-border space-y-3">
-                          {group.memories.map((mem, memIndex) => (
-                            <div key={mem.id} className="p-3 bg-bg-tertiary rounded-lg">
-                              <p className="text-sm text-text-primary">{mem.content}</p>
-                            </div>
-                          ))}
-                          
-                          <div className="pt-3 border-t border-border">
-                            <label className="block text-sm text-text-secondary mb-2">
-                              Merged content (edit if needed):
-                            </label>
-                            <textarea
-                              value={mergeContent[index] || group.suggested_merge}
-                              onChange={(e) => setMergeContent(prev => ({
-                                ...prev,
-                                [index]: e.target.value
-                              }))}
-                              className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-text-primary focus:outline-none focus:border-accent resize-none text-sm"
-                              rows={3}
-                            />
+                  {/* Duplicates Tab */}
+                  {activeTab === 'duplicates' && (
+                    <div className="space-y-3">
+                      {duplicateGroups.length === 0 ? (
+                        <p className="text-center text-text-muted py-4">No duplicates found</p>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-text-secondary">
+                              {duplicateGroups.reduce((sum, g) => sum + g.memories.length, 0)} memories in {duplicateGroups.length} groups
+                            </p>
+                            <button
+                              onClick={handleAutoConsolidate}
+                              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-accent/10 hover:bg-accent/20 text-accent rounded-lg transition-colors"
+                            >
+                              <Zap className="w-3 h-3" />
+                              Auto-merge All
+                            </button>
                           </div>
-                        </div>
+                          {duplicateGroups.map((group, index) => (
+                            <MemoryGroupCard
+                              key={`dup-${index}`}
+                              group={group}
+                              groupKey={`dup-${index}`}
+                              isExpanded={expandedGroups.has(`dup-${index}`)}
+                              onToggle={() => toggleGroupExpanded(`dup-${index}`)}
+                              onMerge={() => handleMergeGroup(`dup-${index}`, group)}
+                              mergeContent={mergeContent[`dup-${index}`] || group.suggested_merge}
+                              onMergeContentChange={(content) => setMergeContent(prev => ({ ...prev, [`dup-${index}`]: content }))}
+                            />
+                          ))}
+                        </>
                       )}
                     </div>
-                  ))}
+                  )}
+
+                  {/* Related Tab */}
+                  {activeTab === 'related' && (
+                    <div className="space-y-3">
+                      {relatedGroups.length === 0 ? (
+                        <p className="text-center text-text-muted py-4">No related memories found</p>
+                      ) : (
+                        <>
+                          <p className="text-sm text-text-muted">
+                            These memories are thematically related and could be combined for clarity.
+                          </p>
+                          {relatedGroups.map((group, index) => (
+                            <MemoryGroupCard
+                              key={`rel-${index}`}
+                              group={group}
+                              groupKey={`rel-${index}`}
+                              isExpanded={expandedGroups.has(`rel-${index}`)}
+                              onToggle={() => toggleGroupExpanded(`rel-${index}`)}
+                              onMerge={() => handleMergeGroup(`rel-${index}`, group)}
+                              mergeContent={mergeContent[`rel-${index}`] || group.suggested_merge}
+                              onMergeContentChange={(content) => setMergeContent(prev => ({ ...prev, [`rel-${index}`]: content }))}
+                              color="purple"
+                            />
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Low Value Tab */}
+                  {activeTab === 'lowvalue' && (
+                    <div className="space-y-3">
+                      {lowValueMemories.length === 0 ? (
+                        <p className="text-center text-text-muted py-4">No low-value memories found</p>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-text-muted">
+                              These memories are generic or temporary and may not be useful.
+                            </p>
+                            <button
+                              onClick={handleDeleteAllLowValue}
+                              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-error/10 hover:bg-error/20 text-error rounded-lg transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              Remove All
+                            </button>
+                          </div>
+                          {lowValueMemories.map((mem) => (
+                            <div key={mem.id} className="p-4 border border-error/20 bg-error/5 rounded-lg">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1">
+                                  <p className="text-text-primary">{mem.content}</p>
+                                  <p className="text-sm text-error/80 mt-2">{mem.reason}</p>
+                                </div>
+                                <button
+                                  onClick={() => handleDeleteLowValue(mem.id)}
+                                  className="p-2 text-error hover:bg-error/10 rounded-lg transition-colors"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// Memory Group Card Component
+function MemoryGroupCard({
+  group,
+  groupKey,
+  isExpanded,
+  onToggle,
+  onMerge,
+  mergeContent,
+  onMergeContentChange,
+  color = 'accent'
+}: {
+  group: DuplicateGroup;
+  groupKey: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onMerge: () => void;
+  mergeContent: string;
+  onMergeContentChange: (content: string) => void;
+  color?: 'accent' | 'purple';
+}) {
+  const colorClasses = color === 'purple' 
+    ? 'bg-purple-500/10 text-purple-400'
+    : 'bg-accent/10 text-accent';
+  
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-4 bg-surface hover:bg-surface-hover transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          {isExpanded ? (
+            <ChevronDown className="w-4 h-4 text-text-muted" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-text-muted" />
+          )}
+          <span className="text-text-primary font-medium">
+            {group.memories.length} memories
+          </span>
+          <span className={`text-xs px-2 py-0.5 rounded-full ${colorClasses}`}>
+            {Math.round(group.similarity * 100)}% similar
+          </span>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onMerge();
+          }}
+          className="flex items-center gap-1 px-3 py-1 text-sm bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
+        >
+          <Merge className="w-3 h-3" />
+          Merge
+        </button>
+      </button>
+
+      {isExpanded && (
+        <div className="p-4 border-t border-border space-y-3">
+          <p className="text-xs text-text-muted">{group.reason}</p>
+          {group.memories.map((mem) => (
+            <div key={mem.id} className="p-3 bg-bg-tertiary rounded-lg">
+              <p className="text-sm text-text-primary">{mem.content}</p>
+            </div>
+          ))}
+          
+          <div className="pt-3 border-t border-border">
+            <label className="block text-sm text-text-secondary mb-2">
+              Merged content (edit if needed):
+            </label>
+            <textarea
+              value={mergeContent}
+              onChange={(e) => onMergeContentChange(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-text-primary focus:outline-none focus:border-accent resize-none text-sm"
+              rows={3}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

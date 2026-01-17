@@ -322,6 +322,253 @@ class MemorySystem:
         contents = [m["content"] for m in memories]
         return max(contents, key=len)
 
+    async def analyze_memories(self, user_id: str, threshold: float = 0.85, find_low_value: bool = True) -> Dict[str, Any]:
+        """Comprehensive memory analysis: find duplicates, related concepts, and low-value entries
+        
+        Returns:
+        - groups: Similar memories that could be merged
+        - low_value: Generic/unhelpful memories that could be removed
+        - related: Thematically related memories that could be combined
+        """
+        if not self.is_available:
+            return {"groups": [], "low_value": [], "related": [], "total_memories": 0}
+        
+        try:
+            import numpy as np
+            
+            # Get all memories
+            all_memories = await self.get_all_memories(user_id, limit=500)
+            
+            if len(all_memories) < 1:
+                return {"groups": [], "low_value": [], "related": [], "total_memories": 0}
+            
+            # Get embeddings for all memories
+            embeddings = []
+            for mem in all_memories:
+                emb = self._memory.embedding_model.embed(mem["content"])
+                embeddings.append(emb)
+            
+            def cosine_similarity(a, b):
+                a = np.array(a)
+                b = np.array(b)
+                return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+            
+            # 1. Find duplicate/highly similar memories
+            processed = set()
+            groups = []
+            
+            for i in range(len(all_memories)):
+                if i in processed:
+                    continue
+                    
+                group = [all_memories[i]]
+                group_indices = [i]
+                processed.add(i)
+                
+                for j in range(i + 1, len(all_memories)):
+                    if j in processed:
+                        continue
+                    
+                    sim = cosine_similarity(embeddings[i], embeddings[j])
+                    if sim >= threshold:
+                        group.append(all_memories[j])
+                        group_indices.append(j)
+                        processed.add(j)
+                
+                if len(group) > 1:
+                    # Calculate average similarity within group
+                    sims = []
+                    for k in range(len(group_indices)):
+                        for l in range(k + 1, len(group_indices)):
+                            sims.append(cosine_similarity(embeddings[group_indices[k]], embeddings[group_indices[l]]))
+                    
+                    avg_sim = sum(sims) / len(sims) if sims else 0
+                    
+                    groups.append({
+                        "type": "duplicate",
+                        "memories": [{"id": m["id"], "content": m["content"]} for m in group],
+                        "similarity": round(avg_sim, 3),
+                        "suggested_merge": self._suggest_merge(group),
+                        "reason": "These memories are very similar and could be merged"
+                    })
+            
+            # 2. Find related concepts (lower threshold) that aren't duplicates
+            related_threshold = max(0.65, threshold - 0.2)
+            related_processed = set()
+            related_groups = []
+            
+            # Get indices already in duplicate groups
+            duplicate_indices = set()
+            for g in groups:
+                for m in g["memories"]:
+                    for i, mem in enumerate(all_memories):
+                        if mem["id"] == m["id"]:
+                            duplicate_indices.add(i)
+            
+            for i in range(len(all_memories)):
+                if i in related_processed or i in duplicate_indices:
+                    continue
+                
+                related = [(all_memories[i], i)]
+                related_processed.add(i)
+                
+                for j in range(i + 1, len(all_memories)):
+                    if j in related_processed or j in duplicate_indices:
+                        continue
+                    
+                    sim = cosine_similarity(embeddings[i], embeddings[j])
+                    # Related but not duplicate
+                    if related_threshold <= sim < threshold:
+                        related.append((all_memories[j], j))
+                        related_processed.add(j)
+                
+                if len(related) > 1:
+                    sims = []
+                    for k in range(len(related)):
+                        for l in range(k + 1, len(related)):
+                            sims.append(cosine_similarity(embeddings[related[k][1]], embeddings[related[l][1]]))
+                    avg_sim = sum(sims) / len(sims) if sims else 0
+                    
+                    related_groups.append({
+                        "type": "related",
+                        "memories": [{"id": m["id"], "content": m["content"]} for m, _ in related],
+                        "similarity": round(avg_sim, 3),
+                        "suggested_merge": await self._suggest_smart_merge([m for m, _ in related]),
+                        "reason": "These memories are thematically related and could be combined"
+                    })
+            
+            # 3. Find low-value/generic memories using LLM
+            low_value = []
+            if find_low_value and all_memories:
+                low_value = await self._find_low_value_memories(all_memories)
+            
+            total_duplicates = sum(len(g["memories"]) - 1 for g in groups)
+            
+            return {
+                "groups": groups,
+                "related": related_groups,
+                "low_value": low_value,
+                "total_duplicates": total_duplicates,
+                "total_memories": len(all_memories)
+            }
+            
+        except Exception as e:
+            print(f"Error analyzing memories: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"groups": [], "low_value": [], "related": [], "error": str(e)}
+
+    async def _find_low_value_memories(self, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Use LLM to identify generic/low-value memories"""
+        try:
+            from app.services.ollama_client import get_ollama_client
+            ollama = get_ollama_client()
+            
+            # Format memories for analysis
+            memory_list = "\n".join([
+                f"{i+1}. {m['content']}" 
+                for i, m in enumerate(memories[:50])  # Limit to avoid token overflow
+            ])
+            
+            prompt = f"""Analyze these personal memories and identify which ones are LOW VALUE and should be removed.
+
+LOW VALUE memories are:
+- Too generic/vague (e.g., "Likes technology", "Enjoys learning")
+- Temporary/transient info (e.g., "Has a document about X", "Was working on Y")
+- Obvious/unhelpful (e.g., "Uses a computer", "Speaks English")
+- Duplicate concepts stated differently
+- Not useful for personalizing future conversations
+
+HIGH VALUE memories are:
+- Specific personal facts (name, job, location, preferences)
+- Concrete interests with detail (e.g., "Builds game development projects in Godot")
+- Useful context for conversations (e.g., "Works as an AI Engineer at Belden Inc")
+- Specific preferences (e.g., "Prefers concise responses over lengthy explanations")
+
+MEMORIES:
+{memory_list}
+
+Return ONLY a JSON object with this format:
+{{"low_value": [
+  {{"index": 1, "reason": "Too generic - doesn't provide actionable context"}},
+  {{"index": 5, "reason": "Temporary document reference - not useful long-term"}}
+]}}
+
+Be selective - only flag memories that are clearly low value. If unsure, don't include it."""
+
+            response = await ollama.chat(
+                model=settings.default_chat_model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = response.get("message", {}).get("content", "").strip()
+            
+            import json
+            import re
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    data = json.loads(json_match.group())
+                    low_value_items = data.get("low_value", [])
+                    
+                    result = []
+                    for item in low_value_items:
+                        idx = item.get("index", 0) - 1  # Convert to 0-based
+                        if 0 <= idx < len(memories):
+                            result.append({
+                                "id": memories[idx]["id"],
+                                "content": memories[idx]["content"],
+                                "reason": item.get("reason", "Generic or low-value memory")
+                            })
+                    
+                    return result
+                except json.JSONDecodeError:
+                    pass
+            
+            return []
+            
+        except Exception as e:
+            print(f"Error finding low-value memories: {e}")
+            return []
+
+    async def _suggest_smart_merge(self, memories: List[Dict[str, Any]]) -> str:
+        """Use LLM to suggest a smart merge of related memories"""
+        try:
+            from app.services.ollama_client import get_ollama_client
+            ollama = get_ollama_client()
+            
+            contents = [m["content"] for m in memories]
+            memories_text = "\n- ".join(contents)
+            
+            prompt = f"""These related memories should be combined into a single, comprehensive memory:
+
+- {memories_text}
+
+Write ONE concise memory statement that captures all the key information. Be specific and actionable.
+Return ONLY the merged memory text, nothing else."""
+
+            response = await ollama.chat(
+                model=settings.default_chat_model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            merged = response.get("message", {}).get("content", "").strip()
+            
+            # Clean up any quotes or extra formatting
+            merged = merged.strip('"\'')
+            
+            if merged and len(merged) > 10:
+                return merged
+            
+            # Fallback to longest memory
+            return max(contents, key=len)
+            
+        except Exception as e:
+            print(f"Error suggesting smart merge: {e}")
+            return max([m["content"] for m in memories], key=len)
+
     async def extract_memories(self, user_id: str, messages: List[Dict[str, str]], metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Extract potential memories from conversation WITHOUT saving them.
         

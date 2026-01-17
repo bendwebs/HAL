@@ -293,6 +293,7 @@ class ConsolidateRequest(BaseModel):
     """Request to consolidate/deduplicate memories"""
     similarity_threshold: float = Field(0.85, ge=0.5, le=1.0, description="Threshold for considering memories similar")
     dry_run: bool = Field(True, description="If true, only report what would be changed")
+    find_low_value: bool = Field(True, description="Also identify low-value/generic memories")
 
 
 class MergeMemoriesRequest(BaseModel):
@@ -306,18 +307,20 @@ async def consolidate_memories(
     request: ConsolidateRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Analyze memories for duplicates and suggest consolidations
+    """Analyze memories for duplicates, related concepts, and low-value entries
     
-    Uses semantic similarity to find memories that could be merged.
+    Uses semantic similarity to find memories that could be merged,
+    and LLM analysis to identify generic/low-value memories.
     """
     memory_system = get_memory_system()
     
     if not memory_system.is_available:
         raise HTTPException(status_code=503, detail="Memory system not available")
     
-    result = await memory_system.find_duplicates(
+    result = await memory_system.analyze_memories(
         user_id=current_user["_id"],
-        threshold=request.similarity_threshold
+        threshold=request.similarity_threshold,
+        find_low_value=request.find_low_value
     )
     
     if not request.dry_run and result.get("groups"):
