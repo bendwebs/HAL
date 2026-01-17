@@ -248,28 +248,14 @@ export default function ChatPage() {
           {/* Memory Usage Indicator */}
           {memoriesUsed.length > 0 && !isSending && (
             <div className="max-w-3xl mx-auto">
-              <div className="flex items-start gap-2 p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
-                <Brain className="w-4 h-4 text-purple-400 mt-0.5 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-purple-300 font-medium mb-1">
-                    Used {memoriesUsed.length} memories
-                  </p>
-                  <div className="space-y-1">
-                    {memoriesUsed.slice(0, 3).map((m, i) => (
-                      <p key={i} className="text-xs text-text-muted truncate">
-                        • {m.content}
-                      </p>
-                    ))}
-                    {memoriesUsed.length > 3 && (
-                      <p className="text-xs text-text-muted">
-                        +{memoriesUsed.length - 3} more
-                      </p>
-                    )}
-                  </div>
-                </div>
+              <div className="flex items-center gap-2 px-3 py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                <Brain className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                <p className="text-sm text-purple-300">
+                  Used memories
+                </p>
                 <button 
                   onClick={() => setMemoriesUsed([])}
-                  className="p-1 text-text-muted hover:text-text-primary"
+                  className="ml-auto p-1 text-text-muted hover:text-text-primary"
                 >
                   <X className="w-3 h-3" />
                 </button>

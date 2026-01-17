@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Chat } from '@/types';
-import { chats as chatsApi, tts as ttsApi } from '@/lib/api';
+import { Chat, Persona } from '@/types';
+import { chats as chatsApi, tts as ttsApi, personas as personasApi } from '@/lib/api';
 import { useUIStore } from '@/stores/ui';
 import toast from 'react-hot-toast';
 import { 
@@ -16,7 +16,9 @@ import {
   Check,
   X,
   Volume2,
-  VolumeX
+  VolumeX,
+  User,
+  ChevronDown
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -38,6 +40,8 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
   const [title, setTitle] = useState(chat.title);
   const [showMenu, setShowMenu] = useState(false);
   const [ttsAvailable, setTtsAvailable] = useState(false);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [showPersonaMenu, setShowPersonaMenu] = useState(false);
 
   // Check if TTS service is available
   useEffect(() => {
@@ -46,6 +50,11 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
     }).catch(() => {
       setTtsAvailable(false);
     });
+  }, []);
+
+  // Load personas
+  useEffect(() => {
+    personasApi.list().then(setPersonas).catch(console.error);
   }, []);
 
   const VisibilityIcon = visibilityIcons[chat.visibility];
@@ -62,6 +71,25 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
       toast.error('Failed to toggle TTS');
     }
   };
+
+  const handlePersonaChange = async (personaId: string | null) => {
+    try {
+      const updated = await chatsApi.update(chat.id, { 
+        persona_id: personaId 
+      });
+      onUpdate(updated);
+      const personaName = personaId 
+        ? personas.find(p => p.id === personaId)?.name || 'Persona'
+        : 'Default';
+      toast.success(`Switched to ${personaName}`);
+    } catch (err) {
+      console.error('Failed to change persona:', err);
+      toast.error('Failed to change persona');
+    }
+    setShowPersonaMenu(false);
+  };
+
+  const currentPersona = personas.find(p => p.id === chat.persona_id);
 
   const handleSaveTitle = async () => {
     if (title.trim() && title !== chat.title) {
@@ -157,6 +185,54 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
             {chat.title}
           </h1>
           
+          {/* Persona Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowPersonaMenu(!showPersonaMenu)}
+              className="flex items-center gap-1.5 px-2 py-1 text-sm text-text-secondary hover:bg-surface rounded-lg transition-colors"
+            >
+              <User className="w-4 h-4" />
+              <span className="hidden sm:inline max-w-[100px] truncate">
+                {currentPersona?.name || 'Default'}
+              </span>
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            
+            {showPersonaMenu && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowPersonaMenu(false)}
+                />
+                <div className="absolute right-0 top-full mt-1 w-48 bg-bg-elevated border border-border rounded-lg shadow-lg z-50 py-1 max-h-64 overflow-y-auto">
+                  <button
+                    onClick={() => handlePersonaChange(null)}
+                    className={`w-full px-4 py-2 text-left text-sm hover:bg-surface flex items-center gap-2 ${
+                      !chat.persona_id ? 'text-accent' : 'text-text-secondary'
+                    }`}
+                  >
+                    <User className="w-4 h-4" />
+                    Default
+                    {!chat.persona_id && <Check className="w-3 h-3 ml-auto" />}
+                  </button>
+                  {personas.map(persona => (
+                    <button
+                      key={persona.id}
+                      onClick={() => handlePersonaChange(persona.id)}
+                      className={`w-full px-4 py-2 text-left text-sm hover:bg-surface flex items-center gap-2 ${
+                        chat.persona_id === persona.id ? 'text-accent' : 'text-text-secondary'
+                      }`}
+                    >
+                      <User className="w-4 h-4" />
+                      <span className="truncate">{persona.name}</span>
+                      {chat.persona_id === persona.id && <Check className="w-3 h-3 ml-auto" />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          
           <div className="flex items-center gap-1 text-text-muted">
             <VisibilityIcon className="w-4 h-4" />
             <span className="text-xs capitalize hidden sm:inline">{chat.visibility}</span>
@@ -208,6 +284,12 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
                           </>
                         )}
                       </button>
+                    )}
+                    {!ttsAvailable && (
+                      <div className="w-full px-4 py-2 text-left text-sm text-text-muted flex items-center gap-2 cursor-not-allowed">
+                        <Volume2 className="w-4 h-4 opacity-50" />
+                        <span className="opacity-50">TTS (service offline)</span>
+                      </div>
                     )}
                     <button
                       onClick={() => {
