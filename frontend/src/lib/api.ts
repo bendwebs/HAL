@@ -89,14 +89,46 @@ export const chats = {
   delete: (id: string) =>
     request<void>(`/api/chats/${id}`, { method: 'DELETE' }),
   
-  bulkDelete: (titleFilter?: string, deleteEmptyOnly = true) =>
+  bulkDelete: (options: { titleFilter?: string; deleteEmptyOnly?: boolean; chatIds?: string[] }) =>
     request<{ deleted: number; skipped: number; message: string }>(
       `/api/chats/bulk/delete?${new URLSearchParams({
-        ...(titleFilter && { title_filter: titleFilter }),
-        delete_empty_only: deleteEmptyOnly.toString()
+        ...(options.titleFilter && { title_filter: options.titleFilter }),
+        delete_empty_only: (options.deleteEmptyOnly ?? true).toString(),
+        ...(options.chatIds && { chat_ids: options.chatIds.join(',') })
       })}`,
       { method: 'DELETE' }
     ),
+  
+  getStats: () =>
+    request<{
+      total_chats: number;
+      empty_chats: number;
+      title_groups: Record<string, { count: number; empty: number; total_messages: number }>;
+      chats: Array<{
+        id: string;
+        title: string;
+        message_count: number;
+        created_at: string;
+        updated_at: string;
+        persona_id?: string;
+      }>;
+    }>('/api/chats/analysis/stats'),
+  
+  getPreview: (chatId: string, limit = 10) =>
+    request<{
+      chat_id: string;
+      title: string;
+      total_messages: number;
+      messages: Array<{ role: string; content: string; created_at: string }>;
+    }>(`/api/chats/${chatId}/messages/preview?limit=${limit}`),
+  
+  extractMemories: (chatId: string) =>
+    request<{
+      chat_id: string;
+      chat_title: string;
+      message_count: number;
+      pending: string[];
+    }>(`/api/chats/${chatId}/extract-memories`, { method: 'POST' }),
     
   share: (id: string, userIds: string[], permission: string, includeHistory: boolean) =>
     request<any>(`/api/chats/${id}/share`, {

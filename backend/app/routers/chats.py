@@ -250,10 +250,101 @@ async def delete_chat(
     await database.chats.delete_one({"_id": ObjectId(chat_id)})
 
 
+@router.get("/analysis/stats")
+async def get_chat_stats(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get chat statistics and analysis for cleanup"""
+    user_id = current_user["_id"]
+    
+    # Aggregate chat statistics
+    pipeline = [
+        {"$match": {"user_id": ObjectId(user_id)}},
+        {"$lookup": {
+            "from": "messages",
+            "localField": "_id",
+            "foreignField": "chat_id",
+            "as": "messages"
+        }},
+        {"$addFields": {
+            "message_count": {"$size": "$messages"},
+            "first_message": {"$arrayElemAt": ["$messages.created_at", 0]},
+            "last_message": {"$arrayElemAt": ["$messages.created_at", -1]},
+        }},
+        {"$project": {
+            "messages": 0
+        }},
+        {"$sort": {"updated_at": -1}}
+    ]
+    
+    chats = await database.chats.aggregate(pipeline).to_list(1000)
+    
+    # Group by title for duplicates analysis
+    title_counts = {}
+    for chat in chats:
+        title = chat.get("title", "Untitled")
+        if title not in title_counts:
+            title_counts[title] = {"count": 0, "empty": 0, "total_messages": 0}
+        title_counts[title]["count"] += 1
+        title_counts[title]["total_messages"] += chat.get("message_count", 0)
+        if chat.get("message_count", 0) == 0:
+            title_counts[title]["empty"] += 1
+    
+    # Find cleanup opportunities
+    empty_chats = [c for c in chats if c.get("message_count", 0) == 0]
+    duplicate_titles = {k: v for k, v in title_counts.items() if v["count"] > 1}
+    
+    return {
+        "total_chats": len(chats),
+        "empty_chats": len(empty_chats),
+        "title_groups": duplicate_titles,
+        "chats": [
+            {
+                "id": str(c["_id"]),
+                "title": c.get("title", "Untitled"),
+                "message_count": c.get("message_count", 0),
+                "created_at": c.get("created_at"),
+                "updated_at": c.get("updated_at"),
+                "persona_id": str(c["persona_id"]) if c.get("persona_id") else None,
+            }
+            for c in chats
+        ]
+    }
+
+
+@router.get("/{chat_id}/messages/preview")
+async def get_chat_preview(
+    chat_id: str,
+    limit: int = Query(10, ge=1, le=50),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get a preview of chat messages for analysis"""
+    chat = await get_chat_with_permission(chat_id, current_user)
+    
+    messages = await database.messages.find(
+        {"chat_id": ObjectId(chat_id)}
+    ).sort("created_at", 1).limit(limit).to_list(limit)
+    
+    return {
+        "chat_id": chat_id,
+        "title": chat.get("title", "Untitled"),
+        "total_messages": await database.messages.count_documents({"chat_id": ObjectId(chat_id)}),
+        "messages": [
+            {
+                "role": m.get("role"),
+                "content": m.get("content", "")[:500],  # Truncate for preview
+                "created_at": m.get("created_at")
+            }
+            for m in messages
+        ]
+    }
+
+
 @router.delete("/bulk/delete", status_code=status.HTTP_200_OK)
 async def bulk_delete_chats(
     title_filter: Optional[str] = Query(None, description="Delete chats matching this title"),
     delete_empty_only: bool = Query(True, description="Only delete chats with 0 messages"),
+    chat_ids: Optional[str] = Query(None, description="Comma-separated chat IDs to delete"),
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Bulk delete chats (owner only, with safety filters)"""
@@ -262,7 +353,11 @@ async def bulk_delete_chats(
     # Build query - only user's own chats
     query = {"user_id": ObjectId(user_id)}
     
-    if title_filter:
+    # If specific chat IDs provided
+    if chat_ids:
+        ids = [ObjectId(id.strip()) for id in chat_ids.split(",") if id.strip()]
+        query["_id"] = {"$in": ids}
+    elif title_filter:
         query["title"] = title_filter
     
     # Get matching chats
@@ -275,8 +370,8 @@ async def bulk_delete_chats(
     for chat in chats:
         chat_id = chat["_id"]
         
-        # Check message count if delete_empty_only
-        if delete_empty_only:
+        # Check message count if delete_empty_only and no explicit IDs
+        if delete_empty_only and not chat_ids:
             msg_count = await database.messages.count_documents({"chat_id": chat_id})
             if msg_count > 0:
                 skipped_count += 1
@@ -291,6 +386,49 @@ async def bulk_delete_chats(
         "deleted": deleted_count,
         "skipped": skipped_count,
         "message": f"Deleted {deleted_count} chats" + (f", skipped {skipped_count} with messages" if skipped_count else "")
+    }
+
+
+@router.post("/{chat_id}/extract-memories")
+async def extract_memories_from_chat(
+    chat_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Extract memories from a chat's messages"""
+    from app.services.memory_system import get_memory_system
+    
+    chat = await get_chat_with_permission(chat_id, current_user)
+    
+    # Get all messages
+    messages = await database.messages.find(
+        {"chat_id": ObjectId(chat_id)}
+    ).sort("created_at", 1).to_list(100)
+    
+    if not messages:
+        return {"extracted": 0, "pending": []}
+    
+    # Format messages for memory extraction
+    formatted_messages = [
+        {"role": m.get("role", "user"), "content": m.get("content", "")}
+        for m in messages
+    ]
+    
+    memory_system = get_memory_system()
+    if not memory_system.is_available:
+        raise HTTPException(status_code=503, detail="Memory system not available")
+    
+    # Extract potential memories without saving
+    result = await memory_system.extract_memories(
+        user_id=current_user["_id"],
+        messages=formatted_messages,
+        metadata={"chat_id": chat_id}
+    )
+    
+    return {
+        "chat_id": chat_id,
+        "chat_title": chat.get("title", "Untitled"),
+        "message_count": len(messages),
+        **result
     }
 
 
