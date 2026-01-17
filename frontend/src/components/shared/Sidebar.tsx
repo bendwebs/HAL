@@ -14,13 +14,15 @@ import {
   Settings,
   Plus,
   X,
-  Shield
+  Shield,
+  Mic
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ChatListItem } from '@/types';
 
 const navItems = [
   { href: '/chat', icon: MessageSquare, label: 'Chats' },
+  { href: '/converse', icon: Mic, label: 'Converse' },
   { href: '/library', icon: FolderOpen, label: 'Library' },
   { href: '/memories', icon: Brain, label: 'Memories' },
   { href: '/personas', icon: Users, label: 'Personas' },
