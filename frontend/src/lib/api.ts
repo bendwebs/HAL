@@ -273,6 +273,31 @@ export const memories = {
   
   history: (id: string) =>
     request<{ memory_id: string; history: any[] }>(`/api/memories/${id}/history`),
+  
+  consolidate: (similarityThreshold = 0.85, dryRun = true) =>
+    request<{ 
+      groups: Array<{
+        memories: Array<{ id: string; content: string }>;
+        similarity: number;
+        suggested_merge: string;
+      }>;
+      total_duplicates: number;
+      total_memories: number;
+      deleted?: number;
+    }>('/api/memories/consolidate', {
+      method: 'POST',
+      body: JSON.stringify({ similarity_threshold: similarityThreshold, dry_run: dryRun }),
+    }),
+  
+  merge: (memoryIds: string[], mergedContent: string) =>
+    request<{ 
+      success: boolean;
+      merged_memory: { id: string; content: string };
+      deleted_count: number;
+    }>('/api/memories/merge', {
+      method: 'POST',
+      body: JSON.stringify({ memory_ids: memoryIds, merged_content: mergedContent }),
+    }),
 };
 
 // Tools API

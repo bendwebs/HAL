@@ -135,7 +135,7 @@ export default function ChatPage() {
       case 'action_complete':
         streamingMessageRef.current = { 
           ...current, 
-          actions: [...(current.actions || []), chunk.data] 
+          actions: [...(current.actions || []), chunk.data as MessageAction] 
         };
         setStreamingMessage(streamingMessageRef.current);
         break;

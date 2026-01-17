@@ -155,7 +155,8 @@ async def send_message(
                     message=message_data.content,
                     document_ids=message_data.document_ids,
                     persona_id=str(chat.get("persona_id")) if chat.get("persona_id") else None,
-                    model_override=chat.get("model_override")
+                    model_override=chat.get("model_override"),
+                    voice_mode=chat.get("voice_mode", False)
                 ):
                     # Update full response for saving
                     if chunk["type"] == "thinking":
@@ -283,7 +284,8 @@ async def send_message(
             message=message_data.content,
             document_ids=message_data.document_ids,
             persona_id=str(chat.get("persona_id")) if chat.get("persona_id") else None,
-            model_override=chat.get("model_override")
+            model_override=chat.get("model_override"),
+            voice_mode=chat.get("voice_mode", False)
         )
         
         # Save assistant message

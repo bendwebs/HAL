@@ -138,6 +138,7 @@ class AgentSystem:
         document_ids: List[str] = None,
         persona_id: Optional[str] = None,
         model_override: Optional[str] = None,
+        voice_mode: bool = False,
     ) -> Dict[str, Any]:
         """Generate a complete response (non-streaming)"""
         result = {
@@ -149,7 +150,7 @@ class AgentSystem:
         }
         
         async for chunk in self.generate_response_stream(
-            chat_id, user_id, message, document_ids, persona_id, model_override
+            chat_id, user_id, message, document_ids, persona_id, model_override, voice_mode
         ):
             if chunk["type"] == "thinking":
                 result["thinking"] = chunk["data"].get("content", "")
@@ -170,6 +171,7 @@ class AgentSystem:
         document_ids: List[str] = None,
         persona_id: Optional[str] = None,
         model_override: Optional[str] = None,
+        voice_mode: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Generate response with streaming"""
         model = model_override or self.model
@@ -177,6 +179,20 @@ class AgentSystem:
         
         # Get system prompt from persona
         system_prompt = await self._get_system_prompt(persona_id, user_id)
+        
+        # Add voice mode enhancements for more conversational responses
+        if voice_mode:
+            system_prompt += """
+
+You are in a voice conversation. Keep these guidelines in mind:
+- Be conversational and engaging - ask follow-up questions to keep the dialogue flowing
+- Keep responses concise (1-3 sentences unless explaining something complex)
+- Show genuine curiosity about what the user shares
+- Don't just answer questions - also share relevant thoughts, ask about their experience, or offer interesting related information
+- Use natural conversational fillers occasionally like "That's interesting..." or "You know what..."
+- If the user gives a short response, ask a thoughtful follow-up question
+- Vary your response patterns - don't always start with "That's great!" or similar
+- Remember context from earlier in the conversation and reference it naturally"""
         
         # Build context
         context_parts = []
