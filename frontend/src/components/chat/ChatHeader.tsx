@@ -209,6 +209,12 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
                         )}
                       </button>
                     )}
+                    {!ttsAvailable && (
+                      <div className="w-full px-4 py-2 text-left text-sm text-text-muted flex items-center gap-2 cursor-not-allowed">
+                        <Volume2 className="w-4 h-4 opacity-50" />
+                        <span className="opacity-50">TTS (service offline)</span>
+                      </div>
+                    )}
                     <button
                       onClick={() => {
                         // TODO: Open share modal
