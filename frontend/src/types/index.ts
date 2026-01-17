@@ -241,6 +241,6 @@ export interface ResourceStats {
 
 // Stream chunk types
 export interface StreamChunk {
-  type: 'thinking' | 'action_start' | 'action_update' | 'action_complete' | 'content' | 'done' | 'error' | 'saved';
+  type: 'thinking' | 'action_start' | 'action_update' | 'action_complete' | 'content' | 'done' | 'error' | 'saved' | 'title_updated' | 'memories_used' | 'memories_pending';
   data: Record<string, any>;
 }
