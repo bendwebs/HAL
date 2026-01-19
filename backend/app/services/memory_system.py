@@ -453,7 +453,12 @@ class MemorySystem:
                         "reason": "These memories are thematically related and could be combined"
                     })
             
-            # 3. Find low-value/generic memories using LLM
+            # 3. Find thematic consolidation opportunities (use LLM to group by theme)
+            consolidation_suggestions = []
+            if len(all_memories) > 3:
+                consolidation_suggestions = await self._suggest_thematic_consolidations(all_memories)
+            
+            # 4. Find low-value/generic memories using LLM (very conservative)
             low_value = []
             if find_low_value and all_memories:
                 low_value = await self._find_low_value_memories(all_memories)
@@ -463,6 +468,7 @@ class MemorySystem:
             return {
                 "groups": groups,
                 "related": related_groups,
+                "consolidation_suggestions": consolidation_suggestions,
                 "low_value": low_value,
                 "total_duplicates": total_duplicates,
                 "total_memories": len(all_memories)
@@ -472,10 +478,101 @@ class MemorySystem:
             print(f"Error analyzing memories: {e}")
             import traceback
             traceback.print_exc()
-            return {"groups": [], "low_value": [], "related": [], "error": str(e)}
+            return {"groups": [], "low_value": [], "related": [], "consolidation_suggestions": [], "error": str(e)}
+
+    async def _suggest_thematic_consolidations(self, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Use LLM to suggest thematic groupings for scattered facts
+        
+        Instead of marking memories as low-value, suggest how they could be
+        combined into more useful composite memories.
+        """
+        try:
+            from app.services.ollama_client import get_ollama_client
+            ollama = get_ollama_client()
+            
+            memory_list = "\n".join([
+                f"{i+1}. {m['content']}" 
+                for i, m in enumerate(memories[:40])
+            ])
+            
+            prompt = f"""Analyze these personal memories and suggest how scattered facts could be combined into more useful composite memories.
+
+MEMORIES:
+{memory_list}
+
+TASK: Group related memories that could be combined into single, more useful memories.
+
+Examples of good consolidations:
+- "Likes turtles" + "Has a pet turtle named Shelly" → "Has a pet turtle named Shelly and enjoys turtles in general"
+- "Lives in Oregon" + "Drives a 2WD vehicle" + "Gets stuck in snow" → "Lives in Oregon, drives a 2WD vehicle which can be challenging in snowy conditions"
+- "Has food stocked" + "Has blankets for emergencies" + "Has supplies for power outages" → "Keeps emergency supplies including food, blankets, and other items for power outages"
+
+Return ONLY a JSON object:
+{{"consolidations": [
+  {{
+    "memory_indices": [3, 7, 12],
+    "theme": "Emergency preparedness",
+    "suggested_combined": "Keeps emergency supplies including food, movies, and blankets in case of power outages"
+  }}
+]}}
+
+Only suggest consolidations where combining actually makes sense. If memories are already good standalone, don't include them.
+If no consolidations make sense, return: {{"consolidations": []}}"""
+
+            response = await ollama.chat(
+                model=settings.default_chat_model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = response.get("message", {}).get("content", "").strip()
+            
+            import json
+            import re
+            
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    data = json.loads(json_match.group())
+                    consolidations = data.get("consolidations", [])
+                    
+                    result = []
+                    for cons in consolidations:
+                        indices = cons.get("memory_indices", [])
+                        if len(indices) >= 2:
+                            memories_in_group = []
+                            for idx in indices:
+                                idx = idx - 1  # Convert to 0-based
+                                if 0 <= idx < len(memories):
+                                    memories_in_group.append({
+                                        "id": memories[idx]["id"],
+                                        "content": memories[idx]["content"]
+                                    })
+                            
+                            if len(memories_in_group) >= 2:
+                                result.append({
+                                    "type": "thematic",
+                                    "theme": cons.get("theme", "Related facts"),
+                                    "memories": memories_in_group,
+                                    "suggested_merge": cons.get("suggested_combined", ""),
+                                    "reason": f"These facts about '{cons.get('theme', 'this topic')}' could be combined"
+                                })
+                    
+                    return result
+                except json.JSONDecodeError:
+                    pass
+            
+            return []
+            
+        except Exception as e:
+            print(f"Error suggesting thematic consolidations: {e}")
+            return []
 
     async def _find_low_value_memories(self, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Use LLM to identify generic/low-value memories"""
+        """Use LLM to identify truly useless memories that should be removed
+        
+        IMPORTANT: This should be VERY conservative. Most memories have some value.
+        Only flag memories that are truly useless and cannot be combined with others.
+        """
         try:
             from app.services.ollama_client import get_ollama_client
             ollama = get_ollama_client()
@@ -486,31 +583,34 @@ class MemorySystem:
                 for i, m in enumerate(memories[:50])  # Limit to avoid token overflow
             ])
             
-            prompt = f"""Analyze these personal memories and identify which ones are LOW VALUE and should be removed.
+            prompt = f"""Analyze these personal memories and identify ONLY the ones that are truly useless and should be removed.
 
-LOW VALUE memories are:
-- Too generic/vague (e.g., "Likes technology", "Enjoys learning")
-- Temporary/transient info (e.g., "Has a document about X", "Was working on Y")
-- Obvious/unhelpful (e.g., "Uses a computer", "Speaks English")
-- Duplicate concepts stated differently
-- Not useful for personalizing future conversations
+NEVER FLAG AS LOW VALUE:
+- User's name (ALWAYS high value - "Name is Steve" is important!)
+- Location information (city, state, country)
+- Job/profession information
+- Specific preferences or likes (even simple ones like "likes turtles")
+- Personal context that could be referenced in future conversations
+- Supplies, hobbies, vehicles, pets, family info
 
-HIGH VALUE memories are:
-- Specific personal facts (name, job, location, preferences)
-- Concrete interests with detail (e.g., "Builds game development projects in Godot")
-- Useful context for conversations (e.g., "Works as an AI Engineer at Belden Inc")
-- Specific preferences (e.g., "Prefers concise responses over lengthy explanations")
+ONLY FLAG AS LOW VALUE:
+- Exact duplicates of other memories
+- Completely meaningless statements (e.g., "Had a conversation")
+- References to specific documents/files that no longer exist
+- Statements so vague they provide zero context (e.g., "Exists", "Is a person")
 
 MEMORIES:
 {memory_list}
 
-Return ONLY a JSON object with this format:
+BE VERY CONSERVATIVE. When in doubt, DO NOT flag it. Most memories have value.
+The user's name, preferences, and personal details are ALWAYS valuable.
+
+Return ONLY a JSON object:
 {{"low_value": [
-  {{"index": 1, "reason": "Too generic - doesn't provide actionable context"}},
-  {{"index": 5, "reason": "Temporary document reference - not useful long-term"}}
+  {{"index": 3, "reason": "Exact duplicate of memory #7"}}
 ]}}
 
-Be selective - only flag memories that are clearly low value. If unsure, don't include it."""
+If no memories are truly low value, return: {{"low_value": []}}"""
 
             response = await ollama.chat(
                 model=settings.default_chat_model,
@@ -533,11 +633,26 @@ Be selective - only flag memories that are clearly low value. If unsure, don't i
                     for item in low_value_items:
                         idx = item.get("index", 0) - 1  # Convert to 0-based
                         if 0 <= idx < len(memories):
-                            result.append({
-                                "id": memories[idx]["id"],
-                                "content": memories[idx]["content"],
-                                "reason": item.get("reason", "Generic or low-value memory")
-                            })
+                            memory_content = memories[idx]["content"].lower()
+                            
+                            # HARD PROTECTION: Never flag these as low value
+                            protected_patterns = [
+                                "name is", "name:", "called",  # Names
+                                "lives in", "located in", "from",  # Location
+                                "works at", "job", "profession", "engineer", "developer",  # Job
+                                "likes", "loves", "enjoys", "prefers", "favorite",  # Preferences
+                                "drives", "car", "vehicle",  # Vehicles
+                                "has", "owns",  # Possessions
+                            ]
+                            
+                            is_protected = any(pattern in memory_content for pattern in protected_patterns)
+                            
+                            if not is_protected:
+                                result.append({
+                                    "id": memories[idx]["id"],
+                                    "content": memories[idx]["content"],
+                                    "reason": item.get("reason", "Generic or low-value memory")
+                                })
                     
                     return result
                 except json.JSONDecodeError:
@@ -696,8 +811,8 @@ If nothing new and meaningful to remember, return: {{"facts": []}}"""
     async def auto_consolidate(self, user_id: str, threshold: float = 0.80) -> Dict[str, Any]:
         """Automatically consolidate similar memories for a user
         
-        This merges highly similar memories and removes low-value ones.
-        Called periodically or after adding new memories.
+        This merges highly similar memories, thematic groups, and is very 
+        conservative about removing anything.
         
         Returns summary of actions taken.
         """
@@ -760,16 +875,46 @@ If nothing new and meaningful to remember, return: {{"facts": []}}"""
                         
                         merged_count += 1
             
-            # Optionally delete low-value memories (be conservative)
+            # Merge thematic consolidation suggestions
+            thematic_merged = 0
+            for group in analysis.get("consolidation_suggestions", []):
+                memories = group.get("memories", [])
+                suggested = group.get("suggested_merge", "")
+                if len(memories) > 1 and suggested and len(suggested) > 20:
+                    # Create merged memory
+                    await self.add_memory(
+                        user_id=user_id,
+                        content=suggested,
+                        metadata={
+                            "consolidated": True, 
+                            "theme": group.get("theme", ""),
+                            "merged_from": [m["id"] for m in memories]
+                        },
+                        check_duplicates=False
+                    )
+                    
+                    # Delete originals
+                    for mem in memories:
+                        if await self.delete_memory(mem["id"]):
+                            deleted_count += 1
+                    
+                    thematic_merged += 1
+                    merged_count += 1
+            
+            # Be VERY conservative about deleting "low value" - only delete exact duplicates
             low_value_deleted = 0
-            for lv in analysis.get("low_value", [])[:3]:  # Limit to 3 at a time
-                if await self.delete_memory(lv["id"]):
-                    low_value_deleted += 1
-                    print(f"[DEBUG] Deleted low-value memory: {lv['content'][:50]}... Reason: {lv.get('reason', 'N/A')}")
+            for lv in analysis.get("low_value", [])[:1]:  # Limit to 1 at a time, very conservative
+                # Double-check it's not something important
+                content_lower = lv.get("content", "").lower()
+                if not any(word in content_lower for word in ["name", "lives", "works", "likes", "has", "drives"]):
+                    if await self.delete_memory(lv["id"]):
+                        low_value_deleted += 1
+                        print(f"[DEBUG] Deleted low-value memory: {lv['content'][:50]}... Reason: {lv.get('reason', 'N/A')}")
             
             return {
                 "success": True,
                 "merged_groups": merged_count,
+                "thematic_merged": thematic_merged,
                 "deleted_duplicates": deleted_count,
                 "deleted_low_value": low_value_deleted,
                 "total_memories_before": analysis.get("total_memories", 0),
