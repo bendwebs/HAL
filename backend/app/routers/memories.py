@@ -311,33 +311,27 @@ async def consolidate_memories(
     
     Uses semantic similarity to find memories that could be merged,
     and LLM analysis to identify generic/low-value memories.
+    
+    Set dry_run=False to automatically consolidate.
     """
     memory_system = get_memory_system()
     
     if not memory_system.is_available:
         raise HTTPException(status_code=503, detail="Memory system not available")
     
-    result = await memory_system.analyze_memories(
-        user_id=current_user["_id"],
-        threshold=request.similarity_threshold,
-        find_low_value=request.find_low_value
-    )
-    
-    if not request.dry_run and result.get("groups"):
-        # Auto-consolidate by keeping only the most complete memory in each group
-        deleted_count = 0
-        for group in result["groups"]:
-            memories = group["memories"]
-            if len(memories) > 1:
-                # Keep the longest/most complete one
-                memories_sorted = sorted(memories, key=lambda m: len(m["content"]), reverse=True)
-                keep = memories_sorted[0]
-                for mem in memories_sorted[1:]:
-                    success = await memory_system.delete_memory(mem["id"])
-                    if success:
-                        deleted_count += 1
-        
-        result["deleted"] = deleted_count
+    if request.dry_run:
+        # Just analyze, don't make changes
+        result = await memory_system.analyze_memories(
+            user_id=current_user["_id"],
+            threshold=request.similarity_threshold,
+            find_low_value=request.find_low_value
+        )
+    else:
+        # Actually consolidate memories
+        result = await memory_system.auto_consolidate(
+            user_id=current_user["_id"],
+            threshold=request.similarity_threshold
+        )
     
     return result
 

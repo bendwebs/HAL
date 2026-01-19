@@ -218,7 +218,6 @@ async def send_message(
                                         {"_id": ObjectId(chat_id)},
                                         {"$set": {"title": new_title}}
                                     )
-                                    print(f"[DEBUG] Sending title_updated event: {new_title}")
                                     yield f"data: {json.dumps({'type': 'title_updated', 'data': {'title': new_title}})}\n\n"
                         except Exception as e:
                             print(f"Failed to auto-generate title: {e}")
@@ -254,14 +253,32 @@ async def send_message(
                                 if result:
                                     pending = result.get("pending", [])
                                     for memory_content in pending:
-                                        await mem_system.add_memory(
+                                        add_result = await mem_system.add_memory(
                                             user_id=current_user["_id"],
                                             content=memory_content,
                                             metadata={"chat_id": chat_id, "auto_extracted": True}
                                         )
-                                        print(f"[DEBUG] Background saved memory: {memory_content}")
+                                        if add_result and not add_result.get("skipped"):
+                                            print(f"[DEBUG] Background saved memory: {memory_content[:60]}...")
+                                        elif add_result and add_result.get("skipped"):
+                                            print(f"[DEBUG] Skipped duplicate memory: {memory_content[:60]}...")
+                                
+                                # Periodically consolidate memories (every ~20 messages)
+                                total_msgs = await database.messages.count_documents(
+                                    {"chat_id": {"$in": await database.chats.distinct("_id", {"user_id": ObjectId(current_user["_id"])})}}
+                                )
+                                if total_msgs > 0 and total_msgs % 20 == 0:
+                                    print(f"[DEBUG] Triggering periodic memory consolidation (message #{total_msgs})")
+                                    consolidate_result = await mem_system.auto_consolidate(
+                                        user_id=current_user["_id"],
+                                        threshold=0.80
+                                    )
+                                    print(f"[DEBUG] Consolidation result: {consolidate_result}")
+                                    
                     except Exception as e:
                         print(f"[DEBUG] Background memory extraction error: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # Start background task (non-blocking)
                 asyncio.create_task(extract_and_save_memories())
