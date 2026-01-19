@@ -1,0 +1,10 @@
+# Private keys and certificates - DO NOT COMMIT
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.csr
+*.srl
+*.p12
+*.pfx
