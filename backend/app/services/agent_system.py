@@ -24,8 +24,31 @@ def should_web_search(message: str) -> tuple[bool, Optional[str], Optional[str]]
     """Determine if the message warrants a web search.
     
     Returns (should_search, search_query, target_site) tuple.
+    
+    IMPORTANT: This function should be CONSERVATIVE - only trigger web searches
+    when the user is clearly requesting external information, not for casual
+    conversation that happens to contain words like "recent" or "latest".
     """
     message_lower = message.lower().strip()
+    
+    # Skip very short messages
+    if len(message_lower) < 10:
+        return False, None, None
+    
+    # Skip conversational/personal statements - these are NOT search requests
+    skip_patterns = [
+        r'^(hi|hello|hey|howdy|greetings)',
+        r'^(yes|no|yea|yeah|yep|nope|sure|ok|okay)',
+        r'^(thanks|thank you|thx)',
+        r'(i think|i feel|i believe|in my opinion|imo)',
+        r'(i\'ve been|i have been|it\'s been|its been)',  # Personal observations
+        r'(i live|i work|i\'m from|i am from)',
+        r'^(that\'s|thats) (interesting|cool|nice|great|good)',
+    ]
+    
+    for pattern in skip_patterns:
+        if re.search(pattern, message_lower):
+            return False, None, None
     
     # Known sites that users might want to search on
     known_sites = {
@@ -38,41 +61,79 @@ def should_web_search(message: str) -> tuple[bool, Optional[str], Optional[str]]
         'youtube': 'youtube.com',
         'github': 'github.com',
         'yahoo finance': 'finance.yahoo.com',
+        'google': None,  # Generic search indicator
     }
     
-    # Patterns with specific site: "lookup X on Y"
-    site_patterns = [
-        r'(?:look\s*up|search|find|check|get)\s+(.+?)\s+(?:on|from|at)\s+(\w+(?:\s+\w+)?)',
-        r'(?:what|show)\s+(?:is|are|me)\s+(.+?)\s+(?:on|from|at)\s+(\w+(?:\s+\w+)?)',
+    # EXPLICIT search requests - must start with action verb or be a clear question
+    # Pattern 1: "search/lookup/find/google X" at the START of the message
+    explicit_search = re.match(
+        r'^(?:please\s+)?(?:can you\s+)?(?:search|look\s*up|find|google)\s+(?:for\s+)?(?:the\s+)?(.+)',
+        message_lower
+    )
+    if explicit_search:
+        query = explicit_search.group(1).strip()
+        query = re.sub(r'\s*(please|thanks|now|for me)\.?$', '', query, flags=re.IGNORECASE)
+        if len(query) > 3:
+            return True, query, None
+    
+    # Pattern 2: "search X on [site]" or "find X on [site]"
+    site_search = re.match(
+        r'^(?:please\s+)?(?:can you\s+)?(?:search|look\s*up|find|check)\s+(.+?)\s+(?:on|from|at)\s+(\w+(?:\s+\w+)?)',
+        message_lower
+    )
+    if site_search:
+        query = site_search.group(1).strip()
+        site_hint = site_search.group(2).strip()
+        target_site = known_sites.get(site_hint)
+        if target_site:
+            return True, query, target_site
+        if '.' in site_hint:
+            return True, query, site_hint
+        return True, f"{query} {site_hint}", None
+    
+    # Pattern 3: Questions asking for current/latest information
+    # Must be a QUESTION (start with question word or end with ?)
+    is_question = message_lower.endswith('?') or re.match(
+        r'^(what|who|where|when|why|how|which|is|are|does|do|can|could|will|would)\b',
+        message_lower
+    )
+    
+    if is_question:
+        # Check if asking about current/latest/recent things
+        # Note: what(?:'?s| is| are) handles "what's", "whats", "what is", "what are"
+        current_info_patterns = [
+            r'(?:what(?:\'?s| is| are))\s+(?:the\s+)?(?:current|latest|recent|newest|today\'?s?)\s+(.+)',
+            r'(?:what(?:\'?s| is| are))\s+(.+?)\s+(?:right now|today|currently|at the moment)',
+            # "what's the price of X" - must come before the generic "X price" pattern
+            r'(?:what(?:\'?s| is| are))\s+(?:the\s+)?(?:price|cost|value|rate)\s+(?:of\s+)?(.+)',
+            # "what's the X price/cost" - more specific, less greedy
+            r'(?:what(?:\'?s| is| are))\s+(?:the\s+)?(\w+(?:\s+\w+)?)\s+(?:price|cost|value|rate|score|status)\b',
+            r'(?:who|what)\s+(?:is|are)\s+(?:the\s+)?(?:current|new|latest)\s+(.+)',
+            r'(?:how much)\s+(?:is|does|are)\s+(.+)',
+        ]
+        
+        for pattern in current_info_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                query = match.group(1).strip()
+                query = re.sub(r'\s*(please|thanks|\?)\.?$', '', query, flags=re.IGNORECASE)
+                if len(query) > 3:
+                    return True, query, None
+    
+    # Pattern 4: Explicit news requests
+    news_patterns = [
+        r'^(?:get|show|tell)\s+(?:me\s+)?(?:the\s+)?(?:latest|recent|today\'?s?)\s+news\s+(?:about|on|for)\s+(.+)',
+        r'^(?:get|show|tell)\s+(?:me\s+)?(?:the\s+)?(?:latest|recent|today\'?s?)\s+(.+?)\s+news$',  # "get latest AI news"
+        r'^(?:what\'?s?|any)\s+(?:the\s+)?(?:latest|recent|new)\s+news\s+(?:about|on|for)\s+(.+)',
+        r'^news\s+(?:about|on|for)\s+(.+)',
     ]
     
-    for pattern in site_patterns:
-        match = re.search(pattern, message_lower)
+    for pattern in news_patterns:
+        match = re.match(pattern, message_lower)
         if match:
             query = match.group(1).strip()
-            site_hint = match.group(2).strip()
-            target_site = known_sites.get(site_hint)
-            if target_site:
-                return True, query, target_site
-            if '.' in site_hint:
-                return True, query, site_hint
-            return True, f"{query} {site_hint}", None
-    
-    # Generic search patterns
-    generic_patterns = [
-        r'(?:search|look\s*up|find|google)\s+(?:for\s+)?(?:the\s+)?(?:latest\s+)?(.+)',
-        r'(?:what|show)\s+(?:is|are|me)\s+(?:the\s+)?(?:current|latest)\s+(.+)',
-        r'(?:current|latest|recent)\s+(.+?)(?:\s+news|\s+price|\s+update)?$',
-        r'(?:get|find)\s+(?:me\s+)?(?:the\s+)?(?:latest\s+)?(.+?)(?:\s+news)?$',
-    ]
-    
-    for pattern in generic_patterns:
-        match = re.search(pattern, message_lower)
-        if match:
-            query = match.group(1).strip()
-            query = re.sub(r'\s*(please|thanks|now)\.?$', '', query, flags=re.IGNORECASE)
-            if len(query) > 3:
-                return True, query, None
+            if len(query) >= 2:  # Allow short queries like "AI" since we append " news"
+                return True, f"{query} news", None
     
     return False, None, None
 
@@ -476,22 +537,34 @@ You are in a voice conversation. Keep these guidelines in mind:
             if persona:
                 return persona["system_prompt"]
         
-        return """You are HAL, a helpful AI assistant running locally. You have access to the user's personal document library, memories, and web search.
+        return """You are HAL, a friendly AI assistant running locally on the user's computer. You have access to their personal documents, memories from past conversations, and can search the web when needed.
 
-Key capabilities:
-- You can search the user's uploaded documents for relevant information when needed
-- You remember important facts about the user from previous conversations
-- You can search the web for current information when asked (e.g., "lookup X", "search for Y", "latest news about Z")
-- All local data stays private
+IMPORTANT - Response Style:
+- Write like you're having a natural conversation with a friend, not writing a document
+- NEVER use markdown formatting (no **, no ##, no bullet points, no numbered lists)
+- Instead of lists, weave information naturally into sentences and paragraphs
+- Keep responses conversational and flowing, like you're talking out loud
+- Use casual transitions like "So basically...", "The thing is...", "What's interesting is..."
+- It's okay to use contractions (don't, won't, it's, that's)
+- Vary your sentence length - mix short punchy sentences with longer explanatory ones
+- If you need to mention multiple things, work them into the conversation naturally rather than listing them
 
-When answering:
-- For greetings and casual conversation, respond naturally without searching documents
-- If you find relevant information in documents, cite the source (document name)
-- If you recall memories about the user, acknowledge them naturally (e.g., "I remember you mentioned...")
-- When web search results are provided, summarize the key information clearly and cite sources
-- Be helpful, concise, and accurate
-- If you don't know something and it's not in the documents or web results, say so honestly
-- When a user shares personal information (like their name), acknowledge it warmly - this information will be automatically remembered for future conversations"""
+Examples of what NOT to do:
+- "Here are the key points: 1. First thing 2. Second thing"
+- "**Important:** This is crucial"
+- "## Summary"
+
+Examples of good conversational style:
+- "So there are a few things going on here. First off, the main issue seems to be... and then there's also the fact that..."
+- "That's a great question! Basically what happens is..."
+- "I remember you mentioned something about this before - you were working on..."
+
+Your capabilities:
+- You can pull up relevant info from documents the user has uploaded
+- You remember things about the user from previous chats
+- You can search the web when they ask for current information
+
+Be warm, helpful, and genuine. If you don't know something, just say so naturally - no need to be formal about it."""
     
     async def _get_chat_history(self, chat_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent chat history"""
