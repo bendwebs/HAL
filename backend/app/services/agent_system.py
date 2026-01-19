@@ -14,7 +14,7 @@ from app.services.ollama_client import get_ollama_client
 from app.services.rag_engine import get_rag_engine
 from app.services.memory_system import get_memory_system
 from app.services.resource_monitor import get_resource_monitor
-from app.services.tool_executor import ToolExecutor
+from app.services.tool_executor import get_tool_executor
 from app.services.web_search import get_web_search_service
 
 logger = logging.getLogger(__name__)
@@ -230,7 +230,6 @@ class AgentSystem:
     def __init__(self):
         self.model = settings.default_chat_model
         self.max_depth = settings.max_agent_depth
-        self.tool_executor = ToolExecutor()
         self._warmed_up = False
     
     async def warmup(self) -> bool:
@@ -371,6 +370,10 @@ You are in a voice conversation. Keep these guidelines in mind:
                     if web_result.get("answer"):
                         result_desc = f"Got answer + {web_result.get('result_count', 0)} results"
                     
+                    # Track tool usage
+                    tool_executor = get_tool_executor()
+                    await tool_executor.record_tool_usage("web_search")
+                    
                     yield {
                         "type": "action_complete",
                         "data": {
@@ -408,6 +411,10 @@ You are in a voice conversation. Keep these guidelines in mind:
         if memories:
             memory_text = "\n".join([f"- {m['content']}" for m in memories])
             context_parts.append(f"Relevant memories about this user:\n{memory_text}")
+            
+            # Track tool usage
+            tool_executor = get_tool_executor()
+            await tool_executor.record_tool_usage("memory_recall")
             
             # Send memory usage details to frontend
             yield {
@@ -452,6 +459,10 @@ You are in a voice conversation. Keep these guidelines in mind:
                 for r in doc_results
             ])
             context_parts.append(f"Relevant excerpts from your documents:\n{doc_text}")
+            
+            # Track tool usage
+            tool_executor = get_tool_executor()
+            await tool_executor.record_tool_usage("document_search")
             
             # List which documents were searched
             doc_names = list(set(r['document_name'] for r in doc_results))
