@@ -41,20 +41,17 @@ export default function Sidebar() {
   const isAdmin = user?.role === 'admin';
 
   const loadChats = async () => {
-    console.log('[DEBUG] Sidebar: loadChats() starting...');
     try {
       const data = await chatsApi.list();
-      console.log('[DEBUG] Sidebar: loaded chats:', data?.length, 'chats', data?.map(c => ({ id: c.id, title: c.title })));
       setChatList(data || []);
     } catch (err) {
-      console.error('[DEBUG] Sidebar: Failed to load chats:', err);
+      console.error('Failed to load chats:', err);
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    console.log('[DEBUG] Sidebar: chatListVersion changed to', chatListVersion, '- reloading chats');
     loadChats();
   }, [chatListVersion]); // Re-fetch when chatListVersion changes
 
@@ -102,19 +99,8 @@ export default function Sidebar() {
 
       {/* Chat List */}
       <div className="flex-1 overflow-y-auto px-3 pb-3">
-        <div className="flex items-center justify-between mb-2 px-2">
-          <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-            Recent Chats
-          </span>
-          <button 
-            onClick={() => {
-              console.log('[DEBUG] Manual refresh clicked');
-              loadChats();
-            }}
-            className="text-xs text-text-muted hover:text-text-primary"
-          >
-            ↻
-          </button>
+        <div className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2 px-2">
+          Recent Chats
         </div>
         
         {isLoading ? (

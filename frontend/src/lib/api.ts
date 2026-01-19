@@ -4,6 +4,11 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+// Debug log - will show in browser console
+if (typeof window !== 'undefined') {
+  console.log('[HAL API] Using API URL:', API_URL);
+}
+
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -194,7 +199,6 @@ export const messages = {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6));
-            console.log('[DEBUG] Stream chunk received:', data.type, data);
             yield data;
           } catch {}
         }

@@ -117,10 +117,8 @@ export default function ChatPage() {
   const handleStreamChunk = (chunk: StreamChunk) => {
     // Handle events that don't require streaming message state first
     if (chunk.type === 'title_updated') {
-      console.log('[DEBUG] title_updated received:', chunk.data.title);
       if (chunk.data.title) {
         setChat(prev => prev ? { ...prev, title: chunk.data.title } : null);
-        console.log('[DEBUG] Calling refreshChatList() directly from store');
         useUIStore.getState().refreshChatList();
       }
       return;
@@ -132,7 +130,6 @@ export default function ChatPage() {
     }
     
     if (chunk.type === 'memories_pending') {
-      console.log('[DEBUG] Received memories_pending:', chunk.data);
       setPendingMemories(chunk.data.memories || []);
       return;
     }
