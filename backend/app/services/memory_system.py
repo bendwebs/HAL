@@ -92,12 +92,28 @@ class MemorySystem:
         """Check if Mem0 is properly initialized"""
         return self._memory is not None
     
-    async def add_memory(self, user_id: str, content: str, metadata: Optional[Dict[str, Any]] = None):
-        """Add a memory for a user"""
+    async def add_memory(self, user_id: str, content: str, metadata: Optional[Dict[str, Any]] = None, check_duplicates: bool = True):
+        """Add a memory for a user
+        
+        Args:
+            user_id: User identifier
+            content: Memory content to add
+            metadata: Optional metadata
+            check_duplicates: If True, check for similar existing memories first
+        """
         if not self.is_available:
             return None
         
         try:
+            # Optionally check for duplicates before adding
+            if check_duplicates:
+                existing = await self.search_memories(user_id, content, limit=3)
+                for mem in existing:
+                    # If very similar memory exists (score > 0.85), skip
+                    if mem.get("score", 0) > 0.85:
+                        print(f"[DEBUG] Skipping duplicate memory: '{content[:50]}...' (similar to '{mem['content'][:50]}...')")
+                        return {"results": [], "skipped": True, "reason": "duplicate"}
+            
             result = self._memory.add(content, user_id=user_id, metadata=metadata or {})
             return result
         except Exception as e:
@@ -574,6 +590,9 @@ Return ONLY the merged memory text, nothing else."""
         
         Uses the LLM to identify facts worth remembering, but returns them
         for user confirmation before saving.
+        
+        IMPORTANT: This extracts MEANINGFUL, COMPOSITE memories - not every tiny fact.
+        We want memories that will be useful for personalizing future conversations.
         """
         if not self.is_available:
             return {"pending": []}
@@ -582,35 +601,53 @@ Return ONLY the merged memory text, nothing else."""
             from app.services.ollama_client import get_ollama_client
             ollama = get_ollama_client()
             
+            # Get existing memories to avoid duplicates
+            existing_memories = await self.get_all_memories(user_id, limit=50)
+            existing_text = "\n".join([f"- {m['content']}" for m in existing_memories]) if existing_memories else "None yet"
+            
             # Format conversation for analysis
             conversation_text = "\n".join([
                 f"{m['role'].upper()}: {m['content']}" 
                 for m in messages
             ])
             
-            extraction_prompt = f"""You are a memory extraction assistant. Your job is to identify facts about the USER from conversations that should be remembered.
+            extraction_prompt = f"""You are a memory extraction assistant for a personal AI. Your job is to identify MEANINGFUL facts about the USER that should be remembered for future conversations.
 
-CONVERSATION:
+EXISTING MEMORIES (do not duplicate these):
+{existing_text}
+
+CURRENT CONVERSATION:
 {conversation_text}
 
-TASK: Extract any personal facts the user has shared about themselves. Look for:
-- Their name (e.g., "My name is X" or "I'm X" or "Call me X")
-- Their job/profession
-- Where they live or work
-- Their preferences, likes, or dislikes
-- Projects they're working on
-- Any other personal information
+GUIDELINES FOR GOOD MEMORIES:
+1. SPECIFIC and ACTIONABLE - facts that help personalize future conversations
+2. COMPOSITE when possible - combine related facts into one memory
+3. STABLE information - things unlikely to change often
+4. IDENTITY-related - name, job, location, key interests, preferences
 
-IMPORTANT: If the user states their name, that IS a fact to extract. "My name is Steve" should result in {{"facts": ["User's name is Steve"]}}
+EXAMPLES OF GOOD MEMORIES:
+- "User's name is Steve, works as an AI Engineer at Belden Inc"
+- "Lives in Oregon, drives a Jeep Grand Cherokee (2WD), enjoys snow but can get stuck"
+- "Building game development projects using Godot and Pygame"
+- "Prefers concise, conversational responses without excessive formatting"
 
-Return ONLY a JSON object with extracted facts. Include at least one fact if ANY personal information was shared.
+EXAMPLES OF BAD MEMORIES (too granular or generic):
+- "Likes technology" (too vague)
+- "Has a document about X" (temporary)
+- "Mentioned snow" (not useful without context)
+- "Is having a conversation" (obvious)
+- Separate memories for related facts that should be one
 
-Examples:
-- User says "My name is John" → {{"facts": ["User's name is John"]}}
-- User says "I work at Google" → {{"facts": ["User works at Google"]}}
-- User says "Hello" → {{"facts": []}}
+TASK: Extract NEW facts from this conversation that aren't already in existing memories.
+- Combine related facts into composite memories
+- Skip facts that are too generic or temporary
+- Skip anything already covered by existing memories
+- If the user shares their name and it's not in existing memories, ALWAYS extract it
 
-Now extract facts from the conversation above. Respond with ONLY the JSON object, nothing else:"""""
+Return ONLY a JSON object:
+{{"facts": ["Memory statement 1", "Memory statement 2"]}}
+
+If nothing new and meaningful to remember, return: {{"facts": []}}"""
 
             response = await ollama.chat(
                 model=settings.default_chat_model,
@@ -624,12 +661,11 @@ Now extract facts from the conversation above. Respond with ONLY the JSON object
             import json
             import re
             
-            # Try to extract JSON from response - handle nested structures
-            # Look for {"facts": [...]} pattern
+            # Try to extract JSON from response
             json_match = re.search(r'\{[^{}]*"facts"\s*:\s*\[[^\]]*\][^{}]*\}', response_text)
             if not json_match:
-                # Fallback: try to find any JSON object
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            
             if json_match:
                 try:
                     data = json.loads(json_match.group())
@@ -637,7 +673,7 @@ Now extract facts from the conversation above. Respond with ONLY the JSON object
                     print(f"[DEBUG] Extracted facts: {facts}")
                     
                     # Filter out empty or very short facts
-                    valid_facts = [f.strip() for f in facts if f and len(f.strip()) > 10]
+                    valid_facts = [f.strip() for f in facts if f and len(f.strip()) > 15]
                     print(f"[DEBUG] Valid facts after filtering: {valid_facts}")
                     
                     return {
@@ -646,7 +682,6 @@ Now extract facts from the conversation above. Respond with ONLY the JSON object
                     }
                 except json.JSONDecodeError as je:
                     print(f"[DEBUG] JSON decode error: {je}")
-                    pass
             else:
                 print(f"[DEBUG] No JSON match found in response")
             
@@ -657,6 +692,95 @@ Now extract facts from the conversation above. Respond with ONLY the JSON object
             import traceback
             traceback.print_exc()
             return {"pending": []}
+
+    async def auto_consolidate(self, user_id: str, threshold: float = 0.80) -> Dict[str, Any]:
+        """Automatically consolidate similar memories for a user
+        
+        This merges highly similar memories and removes low-value ones.
+        Called periodically or after adding new memories.
+        
+        Returns summary of actions taken.
+        """
+        if not self.is_available:
+            return {"success": False, "error": "Memory system not available"}
+        
+        try:
+            # Analyze memories
+            analysis = await self.analyze_memories(
+                user_id=user_id, 
+                threshold=threshold,
+                find_low_value=True
+            )
+            
+            merged_count = 0
+            deleted_count = 0
+            
+            # Merge duplicate groups
+            for group in analysis.get("groups", []):
+                memories = group.get("memories", [])
+                if len(memories) > 1:
+                    # Get suggested merge content
+                    suggested = group.get("suggested_merge", "")
+                    if not suggested:
+                        suggested = max([m["content"] for m in memories], key=len)
+                    
+                    # Create merged memory
+                    await self.add_memory(
+                        user_id=user_id,
+                        content=suggested,
+                        metadata={"consolidated": True, "merged_from": [m["id"] for m in memories]},
+                        check_duplicates=False  # Don't check duplicates for consolidation
+                    )
+                    
+                    # Delete originals
+                    for mem in memories:
+                        if await self.delete_memory(mem["id"]):
+                            deleted_count += 1
+                    
+                    merged_count += 1
+            
+            # Merge related concept groups (use LLM-suggested merge)
+            for group in analysis.get("related", []):
+                memories = group.get("memories", [])
+                if len(memories) > 1 and group.get("similarity", 0) > 0.7:
+                    suggested = group.get("suggested_merge", "")
+                    if suggested and len(suggested) > 20:
+                        # Create merged memory
+                        await self.add_memory(
+                            user_id=user_id,
+                            content=suggested,
+                            metadata={"consolidated": True, "merged_from": [m["id"] for m in memories]},
+                            check_duplicates=False
+                        )
+                        
+                        # Delete originals
+                        for mem in memories:
+                            if await self.delete_memory(mem["id"]):
+                                deleted_count += 1
+                        
+                        merged_count += 1
+            
+            # Optionally delete low-value memories (be conservative)
+            low_value_deleted = 0
+            for lv in analysis.get("low_value", [])[:3]:  # Limit to 3 at a time
+                if await self.delete_memory(lv["id"]):
+                    low_value_deleted += 1
+                    print(f"[DEBUG] Deleted low-value memory: {lv['content'][:50]}... Reason: {lv.get('reason', 'N/A')}")
+            
+            return {
+                "success": True,
+                "merged_groups": merged_count,
+                "deleted_duplicates": deleted_count,
+                "deleted_low_value": low_value_deleted,
+                "total_memories_before": analysis.get("total_memories", 0),
+                "total_memories_after": analysis.get("total_memories", 0) - deleted_count - low_value_deleted + merged_count
+            }
+            
+        except Exception as e:
+            print(f"Error in auto_consolidate: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
 
 
 # Singleton instance
