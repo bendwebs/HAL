@@ -153,6 +153,8 @@ export default function ConversePage() {
     isListening,
     isSupported,
     audioLevel,
+    transcript,
+    interimTranscript,
     startListening,
     stopListening,
     resetTranscript,
@@ -498,6 +500,15 @@ export default function ConversePage() {
             {speechError}
           </div>
         )}
+
+        {/* Debug display - remove after testing */}
+        <div className="mt-4 text-xs text-gray-500 bg-black/30 px-3 py-2 rounded max-w-xs text-center">
+          <div>Listening: {isListening ? 'YES' : 'NO'}</div>
+          <div>Supported: {isSupported ? 'YES' : 'NO'}</div>
+          <div>Audio Level: {audioLevel.toFixed(2)}</div>
+          <div>Transcript: "{transcript || interimTranscript || 'none'}"</div>
+          <div>Error: {speechError || 'none'}</div>
+        </div>
       </div>
 
       {/* Bottom input bar (visual only for now) */}

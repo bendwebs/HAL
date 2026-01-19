@@ -229,10 +229,15 @@ export function useSpeechRecognition(
       recognitionRef.current.abort();
     }
 
-    // Setup audio analyzer first to verify mic access
-    const audioSetupSuccess = await setupAudioAnalyzer();
-    if (!audioSetupSuccess) {
-      return; // Error already set by setupAudioAnalyzer
+    // Skip audio analyzer on mobile to avoid mic conflicts
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (!isMobile) {
+      // Setup audio analyzer (don't block if it fails - visualization is optional)
+      setupAudioAnalyzer().catch(err => {
+        console.warn('Audio analyzer setup failed (visualization disabled):', err);
+      });
+    } else {
+      console.log('[Speech] Skipping audio analyzer on mobile to avoid mic conflicts');
     }
 
     isStoppingRef.current = false;
@@ -245,20 +250,21 @@ export function useSpeechRecognition(
     recognition.lang = language;
 
     recognition.onstart = () => {
-      console.log('Speech recognition started');
+      console.log('[Speech] Recognition started');
       setIsListening(true);
       setError(null);
     };
 
     recognition.onaudiostart = () => {
-      console.log('Audio capture started');
+      console.log('[Speech] Audio capture started');
     };
 
     recognition.onsoundstart = () => {
-      console.log('Sound detected');
+      console.log('[Speech] Sound detected');
     };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      console.log('[Speech] Result received:', event.results.length, 'results');
       // Reset no-speech counter on successful result
       noSpeechCountRef.current = 0;
       
@@ -267,6 +273,7 @@ export function useSpeechRecognition(
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
+        console.log('[Speech] Result', i, '- isFinal:', result.isFinal, 'transcript:', result[0].transcript);
         if (result.isFinal) {
           finalText += result[0].transcript;
         } else {
@@ -275,12 +282,14 @@ export function useSpeechRecognition(
       }
 
       if (finalText) {
+        console.log('[Speech] Final text:', finalText);
         setTranscript(prev => prev + finalText);
         onResult?.(finalText, true);
       }
       
       setInterimTranscript(interimText);
       if (interimText) {
+        console.log('[Speech] Interim text:', interimText);
         onResult?.(interimText, false);
       }
     };
@@ -289,7 +298,7 @@ export function useSpeechRecognition(
       const errorEvent = event as Event & { error?: string };
       const errorCode = errorEvent.error || 'unknown';
       
-      console.log('Speech recognition error:', errorCode);
+      console.log('[Speech] Error:', errorCode, event);
       
       // Don't report abort as error when we're stopping
       if (errorCode === 'aborted' && isStoppingRef.current) {

@@ -9,6 +9,21 @@ if (typeof window !== 'undefined') {
   console.log('[HAL API] Using API URL:', API_URL);
 }
 
+// Helper to get token from zustand persisted store
+function getToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem('hal-auth');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed?.state?.token || null;
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return null;
+}
+
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -20,7 +35,7 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const token = getToken();
   
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -169,7 +184,8 @@ export const messages = {
     }),
     
   sendStream: async function* (chatId: string, content: string, documentIds: string[] = []) {
-    const token = localStorage.getItem('token');
+    const token = getToken();
+    
     const response = await fetch(`${API_URL}/api/chats/${chatId}/messages?stream=true`, {
       method: 'POST',
       headers: {
@@ -217,7 +233,7 @@ export const documents = {
   get: (id: string) => request<any>(`/api/documents/${id}`),
   
   upload: async (file: File) => {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     const formData = new FormData();
     formData.append('file', file);
     
@@ -438,7 +454,7 @@ export const tts = {
       useTurbo?: boolean;
     }
   ): Promise<Blob> => {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     const response = await fetch(`${API_URL}/api/tts/generate`, {
       method: 'POST',
       headers: {
@@ -463,7 +479,7 @@ export const tts = {
   },
   
   uploadVoice: async (voiceId: string, file: File): Promise<{ success: boolean; voice_id: string; path: string }> => {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     const formData = new FormData();
     formData.append('file', file);
     
