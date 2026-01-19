@@ -25,15 +25,29 @@ export default function MainLayout({
   const [showUserMenu, setShowUserMenu] = useState(false);
   const warmupTriggered = useRef(false);
 
+  const [hydrated, setHydrated] = useState(false);
+  
+  // Handle hydration
   useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
+    setHydrated(true);
+  }, []);
 
   useEffect(() => {
+    // Only check auth after hydration
+    if (!hydrated) return;
+    
+    // If we have a token but no user, fetch the user
+    if (!isAuthenticated && !isLoading) {
+      fetchUser();
+    }
+  }, [hydrated, isAuthenticated, isLoading, fetchUser]);
+
+  useEffect(() => {
+    if (!hydrated) return;
     if (!isLoading && !isAuthenticated) {
       router.push('/login');
     }
-  }, [isLoading, isAuthenticated, router]);
+  }, [hydrated, isLoading, isAuthenticated, router]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -49,7 +63,7 @@ export default function MainLayout({
     }
   }, [isAuthenticated, fetchAlerts]);
 
-  if (isLoading || !isAuthenticated) {
+  if (!hydrated || isLoading || !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg-primary">
         <div className="text-center">

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { User } from '@/types';
 import { auth as authApi } from '@/lib/api';
 
@@ -21,14 +21,13 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       user: null,
       token: null,
-      isLoading: false,  // Start as false - fetchUser will set to true when called
+      isLoading: false,
       isAuthenticated: false,
       
       login: async (username: string, password: string) => {
         set({ isLoading: true });
         try {
           const response = await authApi.login(username, password);
-          localStorage.setItem('token', response.token);
           set({
             user: response.user,
             token: response.token,
@@ -45,7 +44,6 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true });
         try {
           const response = await authApi.register(username, password, displayName);
-          localStorage.setItem('token', response.token);
           set({
             user: response.user,
             token: response.token,
@@ -59,7 +57,6 @@ export const useAuthStore = create<AuthState>()(
       },
       
       logout: () => {
-        localStorage.removeItem('token');
         set({
           user: null,
           token: null,
@@ -68,7 +65,7 @@ export const useAuthStore = create<AuthState>()(
       },
       
       fetchUser: async () => {
-        const token = localStorage.getItem('token');
+        const { token } = get();
         if (!token) {
           set({ isAuthenticated: false, isLoading: false });
           return;
@@ -79,12 +76,10 @@ export const useAuthStore = create<AuthState>()(
           const user = await authApi.me();
           set({
             user,
-            token,
             isAuthenticated: true,
             isLoading: false,
           });
         } catch {
-          localStorage.removeItem('token');
           set({
             user: null,
             token: null,
@@ -103,7 +98,13 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'hal-auth',
-      partialize: (state) => ({ token: state.token }),
+      storage: createJSONStorage(() => localStorage),
+      // Persist everything needed to restore auth state
+      partialize: (state) => ({ 
+        token: state.token,
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+      }),
     }
   )
 );
