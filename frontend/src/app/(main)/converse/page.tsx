@@ -199,14 +199,26 @@ export default function ConversePage() {
     try {
       const data = await personasApi.list();
       setPersonas(data);
+      
+      // Set "Voice Assist" or similar as default persona
+      const voicePersona = data.find((p: Persona) => 
+        p.name.toLowerCase().includes('voice') || 
+        p.name.toLowerCase().includes('assistant')
+      );
+      if (voicePersona && !selectedPersona) {
+        setSelectedPersona(voicePersona);
+      }
     } catch (err) {
       console.error('Failed to load personas:', err);
     }
   };
 
-  // Initialize chat
+  // Initialize chat - now depends on selectedPersona
   useEffect(() => {
     const initializeChat = async () => {
+      // Wait for personas to load first
+      if (personas.length === 0) return;
+      
       try {
         setIsLoading(true);
         const existingChats = await chatsApi.list(false, false);
@@ -218,8 +230,15 @@ export default function ConversePage() {
         
         if (recentVoiceChat) {
           setChat(recentVoiceChat as Chat);
+          // Update persona if needed
+          if (selectedPersona && recentVoiceChat.persona_id !== selectedPersona.id) {
+            await chatsApi.update(recentVoiceChat.id, { persona_id: selectedPersona.id });
+          }
         } else {
-          const newChat = await chatsApi.create({ title: 'Voice Conversation' });
+          const newChat = await chatsApi.create({ 
+            title: 'Voice Conversation',
+            persona_id: selectedPersona?.id 
+          });
           await chatsApi.update(newChat.id, { tts_enabled: true, voice_mode: true } as any);
           setChat(newChat);
         }
@@ -242,7 +261,7 @@ export default function ConversePage() {
         ttsAudioContextRef.current?.close();
       }
     };
-  }, []);
+  }, [personas, selectedPersona, router]);
 
   const handleMicToggleRef = useRef<() => void>(() => {});
 
@@ -500,15 +519,6 @@ export default function ConversePage() {
             {speechError}
           </div>
         )}
-
-        {/* Debug display - remove after testing */}
-        <div className="mt-4 text-xs text-gray-500 bg-black/30 px-3 py-2 rounded max-w-xs text-center">
-          <div>Listening: {isListening ? 'YES' : 'NO'}</div>
-          <div>Supported: {isSupported ? 'YES' : 'NO'}</div>
-          <div>Audio Level: {audioLevel.toFixed(2)}</div>
-          <div>Transcript: "{transcript || interimTranscript || 'none'}"</div>
-          <div>Error: {speechError || 'none'}</div>
-        </div>
       </div>
 
       {/* Bottom input bar (visual only for now) */}
