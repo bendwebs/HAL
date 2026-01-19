@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     max_agent_depth: int = 3
     max_concurrent_agents: int = 8
     
+    # Web Search (Tavily)
+    tavily_api_key: Optional[str] = None
+    
     # Server
     api_prefix: str = "/api"
     debug: bool = True

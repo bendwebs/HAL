@@ -109,6 +109,13 @@ class Database:
             IndexModel([("key", ASCENDING)], unique=True),
         ])
         
+        # Web searches collection
+        await self.db.web_searches.create_indexes([
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("created_at", ASCENDING)]),
+            IndexModel([("query", TEXT)]),
+        ])
+        
         logger.info("Database indexes created")
     
     # ============== Collection Accessors ==============
@@ -152,6 +159,10 @@ class Database:
     @property
     def system_config(self):
         return self.db.system_config
+    
+    @property
+    def web_searches(self):
+        return self.db.web_searches
 
 
 # Global database instance

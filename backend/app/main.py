@@ -104,6 +104,7 @@ from app.routers import (
     tools_router, alerts_router, admin_router
 )
 from app.routers.tts import router as tts_router
+from app.routers.web_search import router as web_search_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -115,6 +116,7 @@ app.include_router(tools_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
+app.include_router(web_search_router, prefix="/api")
 
 
 # Health check endpoint

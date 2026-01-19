@@ -194,6 +194,7 @@ export const messages = {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6));
+            console.log('[DEBUG] Stream chunk received:', data.type, data);
             yield data;
           } catch {}
         }

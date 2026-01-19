@@ -218,6 +218,7 @@ async def send_message(
                                         {"_id": ObjectId(chat_id)},
                                         {"$set": {"title": new_title}}
                                     )
+                                    print(f"[DEBUG] Sending title_updated event: {new_title}")
                                     yield f"data: {json.dumps({'type': 'title_updated', 'data': {'title': new_title}})}\n\n"
                         except Exception as e:
                             print(f"Failed to auto-generate title: {e}")

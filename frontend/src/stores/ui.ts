@@ -37,7 +37,14 @@ export const useUIStore = create<UIState>((set) => ({
   
   // Chat list refresh - increment version to trigger re-fetch
   chatListVersion: 0,
-  refreshChatList: () => set((state) => ({ chatListVersion: state.chatListVersion + 1 })),
+  refreshChatList: () => {
+    console.log('[DEBUG] refreshChatList() called in store');
+    set((state) => {
+      const newVersion = state.chatListVersion + 1;
+      console.log('[DEBUG] chatListVersion incrementing from', state.chatListVersion, 'to', newVersion);
+      return { chatListVersion: newVersion };
+    });
+  },
   
   // Transparency (defaults, will be overridden by user settings)
   showThinking: true,
