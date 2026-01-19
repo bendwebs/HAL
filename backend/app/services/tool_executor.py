@@ -84,6 +84,20 @@ class ToolExecutor:
                     },
                     "required": ["task"]
                 }
+            },
+            "web_search": {
+                "name": "web_search",
+                "display_name": "Web Search",
+                "description": "Search the web for current information using Tavily",
+                "icon": "🔍",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "target_site": {"type": "string", "description": "Optional site to search on"}
+                    },
+                    "required": ["query"]
+                }
             }
         }
     

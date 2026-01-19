@@ -115,6 +115,29 @@ export default function ChatPage() {
   };
 
   const handleStreamChunk = (chunk: StreamChunk) => {
+    // Handle events that don't require streaming message state first
+    if (chunk.type === 'title_updated') {
+      console.log('[DEBUG] title_updated received:', chunk.data.title);
+      if (chunk.data.title) {
+        setChat(prev => prev ? { ...prev, title: chunk.data.title } : null);
+        console.log('[DEBUG] Calling refreshChatList() directly from store');
+        useUIStore.getState().refreshChatList();
+      }
+      return;
+    }
+    
+    if (chunk.type === 'memories_used') {
+      setMemoriesUsed(chunk.data.memories || []);
+      return;
+    }
+    
+    if (chunk.type === 'memories_pending') {
+      console.log('[DEBUG] Received memories_pending:', chunk.data);
+      setPendingMemories(chunk.data.memories || []);
+      return;
+    }
+
+    // All other events require streaming message state
     const current = streamingMessageRef.current;
     if (!current) return;
 
@@ -158,25 +181,6 @@ export default function ChatPage() {
         streamingMessageRef.current = null;
         setStreamingMessage(null);
         setMessages(msgs => [...msgs, finalMessage]);
-        break;
-      
-      case 'title_updated':
-        // Chat title was auto-generated
-        if (chunk.data.title) {
-          setChat(prev => prev ? { ...prev, title: chunk.data.title } : null);
-          refreshChatList(); // Update sidebar
-        }
-        break;
-      
-      case 'memories_used':
-        // Memories that were used to generate this response
-        setMemoriesUsed(chunk.data.memories || []);
-        break;
-      
-      case 'memories_pending':
-        // Potential memories extracted - need user confirmation
-        console.log('[DEBUG] Received memories_pending:', chunk.data);
-        setPendingMemories(chunk.data.memories || []);
         break;
         
       case 'error':

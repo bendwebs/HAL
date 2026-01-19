@@ -6,6 +6,7 @@ from datetime import datetime
 import uuid
 import json
 import re
+import logging
 
 from app.database import database
 from app.config import settings
@@ -14,6 +15,66 @@ from app.services.rag_engine import get_rag_engine
 from app.services.memory_system import get_memory_system
 from app.services.resource_monitor import get_resource_monitor
 from app.services.tool_executor import ToolExecutor
+from app.services.web_search import get_web_search_service
+
+logger = logging.getLogger(__name__)
+
+
+def should_web_search(message: str) -> tuple[bool, Optional[str], Optional[str]]:
+    """Determine if the message warrants a web search.
+    
+    Returns (should_search, search_query, target_site) tuple.
+    """
+    message_lower = message.lower().strip()
+    
+    # Known sites that users might want to search on
+    known_sites = {
+        'bloomberg': 'bloomberg.com',
+        'reuters': 'reuters.com',
+        'cnn': 'cnn.com',
+        'bbc': 'bbc.com',
+        'wikipedia': 'wikipedia.org',
+        'reddit': 'reddit.com',
+        'youtube': 'youtube.com',
+        'github': 'github.com',
+        'yahoo finance': 'finance.yahoo.com',
+    }
+    
+    # Patterns with specific site: "lookup X on Y"
+    site_patterns = [
+        r'(?:look\s*up|search|find|check|get)\s+(.+?)\s+(?:on|from|at)\s+(\w+(?:\s+\w+)?)',
+        r'(?:what|show)\s+(?:is|are|me)\s+(.+?)\s+(?:on|from|at)\s+(\w+(?:\s+\w+)?)',
+    ]
+    
+    for pattern in site_patterns:
+        match = re.search(pattern, message_lower)
+        if match:
+            query = match.group(1).strip()
+            site_hint = match.group(2).strip()
+            target_site = known_sites.get(site_hint)
+            if target_site:
+                return True, query, target_site
+            if '.' in site_hint:
+                return True, query, site_hint
+            return True, f"{query} {site_hint}", None
+    
+    # Generic search patterns
+    generic_patterns = [
+        r'(?:search|look\s*up|find|google)\s+(?:for\s+)?(?:the\s+)?(?:latest\s+)?(.+)',
+        r'(?:what|show)\s+(?:is|are|me)\s+(?:the\s+)?(?:current|latest)\s+(.+)',
+        r'(?:current|latest|recent)\s+(.+?)(?:\s+news|\s+price|\s+update)?$',
+        r'(?:get|find)\s+(?:me\s+)?(?:the\s+)?(?:latest\s+)?(.+?)(?:\s+news)?$',
+    ]
+    
+    for pattern in generic_patterns:
+        match = re.search(pattern, message_lower)
+        if match:
+            query = match.group(1).strip()
+            query = re.sub(r'\s*(please|thanks|now)\.?$', '', query, flags=re.IGNORECASE)
+            if len(query) > 3:
+                return True, query, None
+    
+    return False, None, None
 
 
 def should_search_documents(message: str) -> bool:
@@ -197,6 +258,85 @@ You are in a voice conversation. Keep these guidelines in mind:
         # Build context
         context_parts = []
         
+        # Check if user wants a web search
+        should_search, search_query, target_site = should_web_search(message)
+        
+        if should_search and search_query:
+            web_search = get_web_search_service()
+            
+            if web_search.is_available:
+                # Notify that we're searching
+                yield {
+                    "type": "action_start",
+                    "data": {
+                        "id": str(uuid.uuid4()),
+                        "type": "web_search",
+                        "name": "web_search",
+                        "parameters": {"query": search_query, "site": target_site},
+                        "status": "running"
+                    }
+                }
+                
+                start_time = datetime.utcnow()
+                
+                # Perform search and save results to MongoDB
+                web_result = await web_search.search_and_save(
+                    user_id=user_id,
+                    query=search_query,
+                    target_site=target_site,
+                    max_results=5
+                )
+                
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                
+                if web_result.get("success"):
+                    # Build context from web results
+                    web_context = f"Web search for: {search_query}\n"
+                    
+                    # Add Tavily's answer if available
+                    if web_result.get("answer"):
+                        web_context += f"\nSummary: {web_result['answer']}\n"
+                    
+                    # Add search result snippets
+                    if web_result.get("results"):
+                        web_context += "\nSearch results:\n"
+                        for i, r in enumerate(web_result["results"]):
+                            web_context += f"{i+1}. {r.get('title', '')} ({r.get('url', '')})\n"
+                            web_context += f"   {r.get('content', '')[:500]}\n\n"
+                    
+                    context_parts.append(web_context)
+                    
+                    result_desc = f"Found {web_result.get('result_count', 0)} results"
+                    if web_result.get("answer"):
+                        result_desc = f"Got answer + {web_result.get('result_count', 0)} results"
+                    
+                    yield {
+                        "type": "action_complete",
+                        "data": {
+                            "id": str(uuid.uuid4()),
+                            "type": "web_search",
+                            "name": "web_search",
+                            "parameters": {"query": search_query, "site": target_site},
+                            "status": "complete",
+                            "result": result_desc,
+                            "search_id": web_result.get("search_id"),  # Include for later extraction
+                            "duration_ms": duration_ms
+                        }
+                    }
+                else:
+                    yield {
+                        "type": "action_complete",
+                        "data": {
+                            "id": str(uuid.uuid4()),
+                            "type": "web_search",
+                            "name": "web_search",
+                            "parameters": {"query": search_query, "site": target_site},
+                            "status": "error",
+                            "result": web_result.get("error", "Search failed"),
+                            "duration_ms": duration_ms
+                        }
+                    }
+        
         # Retrieve relevant memories using Mem0 (only if appropriate)
         memory_system = get_memory_system()
         memories = []
@@ -336,19 +476,21 @@ You are in a voice conversation. Keep these guidelines in mind:
             if persona:
                 return persona["system_prompt"]
         
-        return """You are HAL, a helpful AI assistant running locally. You have access to the user's personal document library and memories.
+        return """You are HAL, a helpful AI assistant running locally. You have access to the user's personal document library, memories, and web search.
 
 Key capabilities:
 - You can search the user's uploaded documents for relevant information when needed
 - You remember important facts about the user from previous conversations
-- All data stays local and private
+- You can search the web for current information when asked (e.g., "lookup X", "search for Y", "latest news about Z")
+- All local data stays private
 
 When answering:
 - For greetings and casual conversation, respond naturally without searching documents
 - If you find relevant information in documents, cite the source (document name)
 - If you recall memories about the user, acknowledge them naturally (e.g., "I remember you mentioned...")
+- When web search results are provided, summarize the key information clearly and cite sources
 - Be helpful, concise, and accurate
-- If you don't know something and it's not in the documents, say so honestly
+- If you don't know something and it's not in the documents or web results, say so honestly
 - When a user shares personal information (like their name), acknowledge it warmly - this information will be automatically remembered for future conversations"""
     
     async def _get_chat_history(self, chat_id: str, limit: int = 10) -> List[Dict[str, Any]]:

@@ -117,6 +117,42 @@ def get_resource_monitor() -> ResourceMonitor:
 
 
 async def get_resource_stats() -> Dict[str, Any]:
-    """Get current resource statistics"""
+    """Get current resource statistics including service status"""
+    import httpx
+    from app.database import database
+    from app.config import settings
+    
     monitor = get_resource_monitor()
-    return monitor.get_stats()
+    stats = monitor.get_stats()
+    
+    # Check MongoDB status
+    mongodb_status = "disconnected"
+    try:
+        if database.client:
+            await database.client.admin.command('ping')
+            mongodb_status = "connected"
+    except Exception:
+        pass
+    
+    # Check Ollama status
+    ollama_status = "disconnected"
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.get(f"{settings.ollama_base_url}/api/tags")
+            if response.status_code == 200:
+                ollama_status = "connected"
+    except Exception:
+        pass
+    
+    # Return flattened format for frontend compatibility
+    return {
+        "cpu_percent": stats["cpu"]["percent"],
+        "memory_percent": stats["memory"]["percent"],
+        "disk_percent": stats.get("disk", {}).get("percent", 0),
+        "mongodb_status": mongodb_status,
+        "ollama_status": ollama_status,
+        "gpu": stats.get("gpu"),
+        "agents": stats["agents"],
+        "latency": stats["latency"],
+        "detailed": stats  # Include full stats for advanced use
+    }
