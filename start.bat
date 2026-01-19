@@ -15,7 +15,22 @@ if exist "backend\venv\Scripts\activate.bat" (
     call backend\venv\Scripts\activate.bat
 )
 
-REM Run the startup script
-python start.py
+REM Check for --https flag
+if "%1"=="--https" goto https_mode
+if "%1"=="-s" goto https_mode
+if "%1"=="https" goto https_mode
 
+REM Normal HTTP mode
+echo Starting HAL in HTTP mode...
+echo (Use 'start.bat --https' for mobile voice support)
+echo.
+python start.py
+goto end
+
+:https_mode
+echo Starting HAL in HTTPS mode (for mobile voice)...
+echo.
+python start_https.py
+
+:end
 pause
