@@ -19,7 +19,7 @@ class ToolExecutor:
             "document_search": {
                 "name": "document_search",
                 "display_name": "Document Search",
-                "description": "Search through user's uploaded documents",
+                "description": "Search through user's uploaded documents using RAG",
                 "icon": "📄",
                 "schema": {
                     "type": "object",
@@ -33,7 +33,7 @@ class ToolExecutor:
             "memory_recall": {
                 "name": "memory_recall",
                 "display_name": "Memory Recall",
-                "description": "Search through stored memories about the user",
+                "description": "Search through stored memories about the user using Mem0",
                 "icon": "🧠",
                 "schema": {
                     "type": "object",
@@ -87,9 +87,9 @@ class ToolExecutor:
             },
             "web_search": {
                 "name": "web_search",
-                "display_name": "Web Search",
-                "description": "Search the web for current information using Tavily",
-                "icon": "🔍",
+                "display_name": "Web Search (Tavily)",
+                "description": "Search the web for current information using Tavily API",
+                "icon": "🌐",
                 "schema": {
                     "type": "object",
                     "properties": {
@@ -175,6 +175,28 @@ class ToolExecutor:
                     "created_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow()
                 })
+            else:
+                # Update existing tool definitions (in case they changed)
+                await database.tools.update_one(
+                    {"name": name},
+                    {"$set": {
+                        "display_name": tool["display_name"],
+                        "description": tool["description"],
+                        "icon": tool["icon"],
+                        "schema": tool["schema"],
+                        "updated_at": datetime.utcnow()
+                    }}
+                )
+    
+    async def record_tool_usage(self, tool_name: str):
+        """Record that a tool was used (increment usage_count and update last_used)"""
+        await database.tools.update_one(
+            {"name": tool_name},
+            {
+                "$inc": {"usage_count": 1},
+                "$set": {"last_used": datetime.utcnow()}
+            }
+        )
 
 
 _executor: Optional[ToolExecutor] = None
