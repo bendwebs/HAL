@@ -62,8 +62,9 @@ async def lifespan(app: FastAPI):
     # Create default admin user if not exists
     await create_default_admin()
     
-    # Create default persona
+    # Create default personas
     await create_default_persona()
+    await create_voice_persona()
     
     logger.info("HAL Backend started successfully")
     
@@ -105,6 +106,7 @@ from app.routers import (
 )
 from app.routers.tts import router as tts_router
 from app.routers.web_search import router as web_search_router
+from app.routers.voice_settings import router as voice_settings_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -117,6 +119,7 @@ app.include_router(alerts_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
 app.include_router(web_search_router, prefix="/api")
+app.include_router(voice_settings_router, prefix="/api")
 
 
 # Health check endpoint
@@ -208,6 +211,47 @@ Be warm, helpful, and genuine. If you don't know something, just say so naturall
             "updated_at": now
         })
         logger.info("Default HAL persona created")
+
+
+async def create_voice_persona():
+    """Create voice conversation persona if none exists"""
+    existing = await database.personas.find_one({"is_system": True, "name": "Voice Assistant"})
+    
+    if not existing:
+        now = datetime.utcnow()
+        await database.personas.insert_one({
+            "name": "Voice Assistant",
+            "description": "Optimized for natural voice conversations",
+            "system_prompt": """You are a voice assistant designed for natural spoken conversation. Your responses will be read aloud, so optimize for how they sound when spoken.
+
+CRITICAL VOICE GUIDELINES:
+- Keep responses SHORT and conversational - aim for 1-3 sentences unless more detail is truly needed
+- Never use markdown, bullet points, lists, or any formatting - just natural speech
+- NEVER include asterisks (*) in your responses under any circumstances - no *emphasis*, no **bold**, no actions like *smiles*
+- Never use hashes, dashes, or any other formatting characters
+- Avoid technical jargon unless the user uses it first
+- Use contractions naturally (I'm, you're, it's, don't, won't, that's)
+- Respond like you're chatting with a friend, not writing an essay
+- If asked a complex question, give a brief answer first, then offer to elaborate
+
+SPEECH PATTERNS:
+- Start responses naturally, not with "Sure!" or "Of course!" every time
+- Vary your openings - sometimes just dive into the answer
+- Use natural filler phrases sparingly when appropriate ("Well...", "So...", "Actually...")
+- End responses cleanly without asking "Is there anything else?" unless truly needed
+
+Remember: This is a CONVERSATION, not a Q&A session. Be warm, natural, and concise.""",
+            "avatar_emoji": "🎙️",
+            "temperature": 0.8,
+            "model_override": None,
+            "tools_enabled": ["memory_recall", "memory_store", "web_search"],
+            "creator_id": None,
+            "is_public": True,
+            "is_system": True,
+            "created_at": now,
+            "updated_at": now
+        })
+        logger.info("Voice Assistant persona created")
 
 
 if __name__ == "__main__":

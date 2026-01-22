@@ -71,9 +71,9 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="w-64 h-full bg-bg-secondary border-r border-border flex flex-col">
+    <aside className="w-64 h-full bg-black/60 backdrop-blur-sm border-r border-white/10 flex flex-col">
       {/* Header */}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-border">
+      <div className="h-14 flex items-center justify-between px-4 border-b border-white/10">
         <Link href="/chat" className="flex items-center gap-2">
           <span className="text-2xl">🤖</span>
           <span className="font-bold text-text-primary">HAL</span>
@@ -136,7 +136,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <div className="border-t border-border p-3">
+      <div className="border-t border-white/10 p-3">
         <nav className="space-y-1">
           {navItems.map(item => (
             <Link

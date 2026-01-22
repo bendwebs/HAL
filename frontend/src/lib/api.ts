@@ -442,7 +442,19 @@ export const tts = {
     turbo_available?: boolean;
   }>('/api/tts/health'),
   
-  voices: () => request<{ voices: Array<{ id: string; name: string; path: string | null; source: string }> }>('/api/tts/voices'),
+  voices: () => request<{ 
+    engine: string;
+    voices: Array<{ 
+      id: string; 
+      name: string; 
+      model?: string; 
+      downloaded?: boolean;
+      source: string;
+      accent?: string;
+      quality?: string;
+      gender?: string;
+    }> 
+  }>('/api/tts/voices'),
   
   generate: async (
     text: string, 
@@ -500,6 +512,52 @@ export const tts = {
   
   deleteVoice: (voiceId: string) => 
     request<{ success: boolean; message: string }>(`/api/tts/voices/${voiceId}`, { method: 'DELETE' }),
+};
+
+// Voice Settings API (Admin)
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  accent: string;
+  quality: string;
+  gender: string;
+  description: string;
+  available: boolean;
+  enabled?: boolean;
+}
+
+export const voiceSettings = {
+  // Get all voices (admin only)
+  listAll: () => request<{
+    voices: VoiceInfo[];
+    enabled_count: number;
+    total_count: number;
+    available_count: number;
+  }>('/api/admin/voices'),
+  
+  // Get enabled voices (for /converse page - all users)
+  listEnabled: () => request<{
+    voices: VoiceInfo[];
+  }>('/api/admin/voices/enabled'),
+  
+  // Update enabled voices (admin only)
+  update: (enabledVoiceIds: string[]) =>
+    request<{
+      success: boolean;
+      enabled_count: number;
+      enabled_voice_ids: string[];
+    }>('/api/admin/voices', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled_voice_ids: enabledVoiceIds }),
+    }),
+  
+  // Reset to defaults (admin only)
+  reset: () =>
+    request<{
+      success: boolean;
+      message: string;
+      enabled_count: number;
+    }>('/api/admin/voices/reset', { method: 'POST' }),
 };
 
 export { ApiError };

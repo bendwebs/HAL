@@ -1,13 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth';
 import { useUIStore } from '@/stores/ui';
 import { auth } from '@/lib/api';
-import { User, Eye, EyeOff, Save, Moon, Sun, Monitor } from 'lucide-react';
+import { User, Eye, EyeOff, Save, LogOut } from 'lucide-react';
 
 export default function SettingsPage() {
-  const { user, updateUser } = useAuthStore();
+  const router = useRouter();
+  const { user, updateUser, logout } = useAuthStore();
   const { showThinking, showActions, setShowThinking, setShowActions } = useUIStore();
   
   const [displayName, setDisplayName] = useState(user?.display_name || '');
@@ -50,6 +52,11 @@ export default function SettingsPage() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleLogout = () => {
+    logout();
+    router.push('/login');
   };
 
   return (
@@ -202,6 +209,21 @@ export default function SettingsPage() {
               />
             </div>
           </div>
+        </div>
+
+        {/* Logout Section */}
+        <div className="bg-surface border border-error/20 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-text-primary mb-4">Account</h2>
+          <p className="text-sm text-text-muted mb-4">
+            Logging out will clear your session. You&apos;ll need to log in again to access your chats.
+          </p>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-error/10 hover:bg-error/20 text-error border border-error/20 rounded-lg transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Log Out
+          </button>
         </div>
       </div>
     </div>

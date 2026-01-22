@@ -27,15 +27,54 @@ class PiperTTSService:
     """Piper TTS - Ultra-fast CPU-based text-to-speech"""
     
     # Available voices (will be downloaded on first use)
+    # Format: voice_id -> model_name
+    # American voices
     VOICES = {
+        # American - Medium quality
         "amy": "en_US-amy-medium",
         "arctic": "en_US-arctic-medium",
-        "danny": "en_US-danny-low",
-        "kathleen": "en_US-kathleen-low",
         "lessac": "en_US-lessac-medium",
+        "ryan": "en_US-ryan-medium",
+        # American - High quality
         "libritts": "en_US-libritts-high",
         "ljspeech": "en_US-ljspeech-high",
-        "ryan": "en_US-ryan-medium",
+        # American - Low quality (fast)
+        "danny": "en_US-danny-low",
+        "kathleen": "en_US-kathleen-low",
+        # British - Medium quality
+        "alba": "en_GB-alba-medium",
+        "jenny_dioco": "en_GB-jenny_dioco-medium",
+        "northern_english_male": "en_GB-northern_english_male-medium",
+        "semaine": "en_GB-semaine-medium",
+        "southern_english_female": "en_GB-southern_english_female-medium",
+        "southern_english_male": "en_GB-southern_english_male-medium",
+        "vctk": "en_GB-vctk-medium",
+        # British - Low quality (fast)
+        "cori": "en_GB-cori-medium",
+    }
+    
+    # Voice metadata for UI display
+    VOICE_METADATA = {
+        # American Medium
+        "amy": {"accent": "American", "quality": "Medium", "gender": "Female"},
+        "arctic": {"accent": "American", "quality": "Medium", "gender": "Female"},
+        "lessac": {"accent": "American", "quality": "Medium", "gender": "Female"},
+        "ryan": {"accent": "American", "quality": "Medium", "gender": "Male"},
+        # American High
+        "libritts": {"accent": "American", "quality": "High", "gender": "Mixed"},
+        "ljspeech": {"accent": "American", "quality": "High", "gender": "Female"},
+        # American Low (not shown by default)
+        "danny": {"accent": "American", "quality": "Low", "gender": "Male"},
+        "kathleen": {"accent": "American", "quality": "Low", "gender": "Female"},
+        # British Medium
+        "alba": {"accent": "British", "quality": "Medium", "gender": "Female"},
+        "jenny_dioco": {"accent": "British", "quality": "Medium", "gender": "Female"},
+        "northern_english_male": {"accent": "British", "quality": "Medium", "gender": "Male"},
+        "semaine": {"accent": "British", "quality": "Medium", "gender": "Mixed"},
+        "southern_english_female": {"accent": "British", "quality": "Medium", "gender": "Female"},
+        "southern_english_male": {"accent": "British", "quality": "Medium", "gender": "Male"},
+        "vctk": {"accent": "British", "quality": "Medium", "gender": "Mixed"},
+        "cori": {"accent": "British", "quality": "Medium", "gender": "Female"},
     }
     DEFAULT_VOICE = "amy"
     
@@ -77,7 +116,21 @@ class PiperTTSService:
         """Download a Piper voice model"""
         import urllib.request
         
-        base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/{voice_name.replace('en_US-', '').rsplit('-', 1)[0]}/{voice_name.split('-')[-1]}"
+        # Determine locale (en_US or en_GB)
+        if voice_name.startswith("en_GB"):
+            locale = "en_GB"
+            locale_path = "en/en_GB"
+        else:
+            locale = "en_US"
+            locale_path = "en/en_US"
+        
+        # Extract speaker name and quality from voice_name
+        # Format: en_XX-speaker-quality -> speaker/quality/en_XX-speaker-quality
+        parts = voice_name.replace(f"{locale}-", "").rsplit("-", 1)
+        speaker = parts[0]
+        quality = parts[1] if len(parts) > 1 else "medium"
+        
+        base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{locale_path}/{speaker}/{quality}"
         
         model_url = f"{base_url}/{voice_name}.onnx"
         config_url = f"{base_url}/{voice_name}.onnx.json"
@@ -189,12 +242,16 @@ class PiperTTSService:
         voices = []
         for voice_id, voice_name in self.VOICES.items():
             model_path = os.path.join(PIPER_MODELS_PATH, f"{voice_name}.onnx")
+            metadata = self.VOICE_METADATA.get(voice_id, {})
             voices.append({
                 "id": voice_id,
-                "name": voice_id.title(),
+                "name": voice_id.replace("_", " ").title(),
                 "model": voice_name,
                 "downloaded": os.path.exists(model_path),
-                "source": "piper"
+                "source": "piper",
+                "accent": metadata.get("accent", "American"),
+                "quality": metadata.get("quality", "Medium"),
+                "gender": metadata.get("gender", "Unknown"),
             })
         return voices
     

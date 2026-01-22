@@ -166,6 +166,13 @@ export default function AdminPage() {
               <h2 className="text-lg font-semibold text-text-primary mb-4">Quick Actions</h2>
               <div className="flex flex-wrap gap-3">
                 <button
+                  onClick={() => router.push('/admin/voices')}
+                  className="flex items-center gap-2 px-4 py-2 bg-accent/10 hover:bg-accent/20 border border-accent/30 text-accent rounded-lg transition-colors"
+                >
+                  <Cpu className="w-4 h-4" />
+                  Manage Voices
+                </button>
+                <button
                   onClick={() => router.push('/admin/tools')}
                   className="flex items-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-surface-hover border border-border rounded-lg transition-colors"
                 >

@@ -3,11 +3,11 @@
 @tailwind utilities;
 
 :root {
-  /* Background layers */
-  --bg-primary: #0a0a0b;
-  --bg-secondary: #111113;
-  --bg-tertiary: #1a1a1d;
-  --bg-elevated: #222225;
+  /* Background layers - Deep space theme matching /converse */
+  --bg-primary: #0a0a1a;
+  --bg-secondary: #0d0d1f;
+  --bg-tertiary: #12122a;
+  --bg-elevated: #1a1a35;
   
   /* Surface (cards, modals) */
   --surface: rgba(255, 255, 255, 0.03);

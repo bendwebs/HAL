@@ -313,7 +313,8 @@ You are in a voice conversation. Keep these guidelines in mind:
 - Use natural conversational fillers occasionally like "That's interesting..." or "You know what..."
 - If the user gives a short response, ask a thoughtful follow-up question
 - Vary your response patterns - don't always start with "That's great!" or similar
-- Remember context from earlier in the conversation and reference it naturally"""
+- Remember context from earlier in the conversation and reference it naturally
+- IMPORTANT: Do NOT use asterisks (*) in your responses - no *emphasis*, *actions*, or *emotes*. Speak naturally as if talking aloud."""
         
         # Build context
         context_parts = []

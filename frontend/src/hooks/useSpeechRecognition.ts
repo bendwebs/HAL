@@ -100,6 +100,10 @@ export function useSpeechRecognition(
   const isStoppingRef = useRef(false);
   const noSpeechCountRef = useRef(0);
   
+  // Deduplication: track which result indices have been processed as final
+  const processedFinalIndicesRef = useRef<Set<number>>(new Set());
+  const lastFinalTextRef = useRef<string>('');
+  
   // Audio analysis refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -133,18 +137,15 @@ export function useSpeechRecognition(
 
   // Setup audio analyzer for waveform visualization
   const setupAudioAnalyzer = useCallback(async () => {
-    // Clean up any existing analyzer first
     cleanupAudioAnalyzer();
     
     try {
-      // Build audio constraints with optional device selection
       const audioConstraints: MediaTrackConstraints = {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
       };
       
-      // Add device ID if specified
       if (deviceId) {
         audioConstraints.deviceId = { exact: deviceId };
       }
@@ -156,7 +157,6 @@ export function useSpeechRecognition(
       });
       mediaStreamRef.current = stream;
       
-      // Log which device we got
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         const settings = audioTrack.getSettings();
@@ -178,7 +178,6 @@ export function useSpeechRecognition(
         if (analyserRef.current && !isStoppingRef.current) {
           analyserRef.current.getByteFrequencyData(dataArray);
           
-          // Calculate weighted average (emphasize mid frequencies for voice)
           let sum = 0;
           let count = 0;
           for (let i = 2; i < dataArray.length / 2; i++) {
@@ -229,10 +228,13 @@ export function useSpeechRecognition(
       recognitionRef.current.abort();
     }
 
+    // Reset deduplication tracking
+    processedFinalIndicesRef.current.clear();
+    lastFinalTextRef.current = '';
+
     // Skip audio analyzer on mobile to avoid mic conflicts
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     if (!isMobile) {
-      // Setup audio analyzer (don't block if it fails - visualization is optional)
       setupAudioAnalyzer().catch(err => {
         console.warn('Audio analyzer setup failed (visualization disabled):', err);
       });
@@ -264,8 +266,7 @@ export function useSpeechRecognition(
     };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      console.log('[Speech] Result received:', event.results.length, 'results');
-      // Reset no-speech counter on successful result
+      console.log('[Speech] Result received:', event.results.length, 'results, resultIndex:', event.resultIndex);
       noSpeechCountRef.current = 0;
       
       let finalText = '';
@@ -273,16 +274,36 @@ export function useSpeechRecognition(
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        console.log('[Speech] Result', i, '- isFinal:', result.isFinal, 'transcript:', result[0].transcript);
+        const transcriptText = result[0].transcript;
+        
+        console.log('[Speech] Result', i, '- isFinal:', result.isFinal, 'transcript:', transcriptText);
+        
         if (result.isFinal) {
-          finalText += result[0].transcript;
+          // DEDUPLICATION: Check if this index was already processed as final
+          if (processedFinalIndicesRef.current.has(i)) {
+            console.log('[Speech] Skipping already processed final result at index:', i);
+            continue;
+          }
+          
+          // DEDUPLICATION: Check if the text is the same as the last final text
+          const trimmedText = transcriptText.trim();
+          if (trimmedText === lastFinalTextRef.current) {
+            console.log('[Speech] Skipping duplicate final text:', trimmedText);
+            continue;
+          }
+          
+          // Mark as processed and update last final text
+          processedFinalIndicesRef.current.add(i);
+          lastFinalTextRef.current = trimmedText;
+          
+          finalText += transcriptText;
         } else {
-          interimText += result[0].transcript;
+          interimText += transcriptText;
         }
       }
 
       if (finalText) {
-        console.log('[Speech] Final text:', finalText);
+        console.log('[Speech] Final text (deduped):', finalText);
         setTranscript(prev => prev + finalText);
         onResult?.(finalText, true);
       }
@@ -300,24 +321,20 @@ export function useSpeechRecognition(
       
       console.log('[Speech] Error:', errorCode, event);
       
-      // Don't report abort as error when we're stopping
       if (errorCode === 'aborted' && isStoppingRef.current) {
         return;
       }
       
-      // Handle no-speech error - this is common and expected
       if (errorCode === 'no-speech') {
         noSpeechCountRef.current++;
         console.log(`No speech detected (count: ${noSpeechCountRef.current})`);
         
-        // Only show error after multiple consecutive no-speech events
         if (noSpeechCountRef.current >= 5) {
           const errorMsg = 'No speech detected. Please check your microphone selection and speak clearly.';
           setError(errorMsg);
           onError?.(errorMsg);
         }
         
-        // Auto-restart if continuous mode (silently)
         if (continuous && !isStoppingRef.current) {
           setTimeout(() => {
             try {
@@ -325,14 +342,13 @@ export function useSpeechRecognition(
                 recognitionRef.current.start();
               }
             } catch (e) {
-              // Ignore - may already be started
+              // Ignore
             }
           }, 100);
         }
         return;
       }
       
-      // Map error codes to user-friendly messages
       const errorMessages: Record<string, string> = {
         'audio-capture': 'No microphone found. Please check your audio input device.',
         'not-allowed': 'Microphone permission denied. Please allow microphone access in your browser.',
@@ -349,12 +365,10 @@ export function useSpeechRecognition(
     recognition.onend = () => {
       console.log('Speech recognition ended');
       
-      // Auto-restart if continuous and not manually stopped
       if (continuous && !isStoppingRef.current && recognitionRef.current) {
         try {
           recognition.start();
         } catch (e) {
-          // Ignore if already started or other error
           setIsListening(false);
           setInterimTranscript('');
           cleanupAudioAnalyzer();
@@ -395,6 +409,8 @@ export function useSpeechRecognition(
     setInterimTranscript('');
     setError(null);
     noSpeechCountRef.current = 0;
+    processedFinalIndicesRef.current.clear();
+    lastFinalTextRef.current = '';
   }, []);
 
   // Cleanup on unmount

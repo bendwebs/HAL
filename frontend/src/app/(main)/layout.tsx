@@ -80,9 +80,11 @@ export default function MainLayout({
   };
 
   return (
-    <div className="h-screen bg-bg-primary flex overflow-hidden">
+    <div className="h-screen bg-[#0a0a1a] flex overflow-hidden relative">
+      {/* Full-screen gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-b from-purple-900/10 via-transparent to-purple-900/10 pointer-events-none" />
       {/* Desktop Sidebar */}
-      <div className={`hidden md:block transition-all duration-300 overflow-hidden ${sidebarOpen ? 'w-64' : 'w-0'}`}>
+      <div className={`hidden md:block transition-all duration-300 overflow-hidden z-10 ${sidebarOpen ? 'w-64' : 'w-0'}`}>
         <div className="w-64">
           <Sidebar />
         </div>
@@ -104,9 +106,9 @@ export default function MainLayout({
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden z-10">
         {/* Top Bar */}
-        <header className="h-14 border-b border-border bg-bg-secondary flex items-center px-4 gap-4">
+        <header className="h-14 border-b border-white/10 bg-black/40 backdrop-blur-sm flex items-center px-4 gap-4">
           <button
             onClick={toggleSidebar}
             className="p-2 hover:bg-surface rounded-lg transition-colors"
@@ -156,8 +158,8 @@ export default function MainLayout({
                   className="fixed inset-0 z-40"
                   onClick={() => setShowUserMenu(false)}
                 />
-                <div className="absolute right-0 top-full mt-2 w-48 bg-bg-elevated border border-border rounded-lg shadow-lg z-50 py-1">
-                  <div className="px-4 py-2 border-b border-border">
+                <div className="absolute right-0 top-full mt-2 w-48 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-lg shadow-lg z-50 py-1">
+                  <div className="px-4 py-2 border-b border-white/10">
                     <p className="text-sm font-medium text-text-primary">{user?.display_name}</p>
                     <p className="text-xs text-text-muted">@{user?.username}</p>
                   </div>

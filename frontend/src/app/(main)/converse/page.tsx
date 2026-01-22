@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { chats as chatsApi, messages as messagesApi, tts, personas as personasApi } from '@/lib/api';
+import { chats as chatsApi, messages as messagesApi, tts, personas as personasApi, voiceSettings } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
-import { ArrowLeft, Volume2, VolumeX, ChevronDown, Mic } from 'lucide-react';
+import { ArrowLeft, Volume2, VolumeX, ChevronDown, Mic, Globe } from 'lucide-react';
 import { Chat, StreamChunk } from '@/types';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
@@ -13,6 +13,7 @@ import Link from 'next/link';
 // Configuration
 const SILENCE_TIMEOUT = 1500;
 const INTERRUPT_THRESHOLD = 0.15;
+const UI_HIDE_DELAY = 3000;
 
 interface Persona {
   id: string;
@@ -20,6 +21,19 @@ interface Persona {
   description: string;
   avatar_emoji: string;
   system_prompt?: string;
+}
+
+interface Voice {
+  id: string;
+  name: string;
+  model?: string;
+  downloaded?: boolean;
+  source?: string;
+  accent?: string;
+  quality?: string;
+  gender?: string;
+  description?: string;
+  available?: boolean;
 }
 
 export default function ConversePage() {
@@ -32,16 +46,26 @@ export default function ConversePage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   
+  // UI visibility state
+  const [showUI, setShowUI] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+  const uiTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   // Persona state
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [selectedPersona, setSelectedPersona] = useState<Persona | null>(null);
   const [showPersonaMenu, setShowPersonaMenu] = useState(false);
   
+  // Voice state
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<Voice | null>(null);
+  const [showVoiceMenu, setShowVoiceMenu] = useState(false);
+  
   // TTS state
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
-  // Audio visualization - store frequency data for waveform
+  // Audio visualization
   const [ttsAudioLevel, setTtsAudioLevel] = useState(0);
   const [frequencyData, setFrequencyData] = useState<number[]>(new Array(64).fill(0));
   const ttsAnalyserRef = useRef<AnalyserNode | null>(null);
@@ -52,11 +76,66 @@ export default function ConversePage() {
   const [caption, setCaption] = useState<string>('');
   const [captionType, setCaptionType] = useState<'user' | 'assistant' | 'status'>('status');
   
-  // Input management
-  const [userInput, setUserInput] = useState('');
+  // Input management - use refs to avoid stale closure issues
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastTranscriptRef = useRef('');
+  const accumulatedTextRef = useRef('');
   const isProcessingRef = useRef(false);
+  const lastFinalTranscriptRef = useRef(''); // Track to prevent duplicates
+  const recentFinalWordsRef = useRef<string[]>([]); // Track recent final words for better deduplication
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Try to enter fullscreen on mobile (hides URL bar)
+  const requestFullscreen = useCallback(() => {
+    if (!isMobile) return;
+    
+    const elem = document.documentElement;
+    if (elem.requestFullscreen && !document.fullscreenElement) {
+      elem.requestFullscreen().catch(() => {
+        // Fullscreen not supported or denied - that's ok
+      });
+    } else if ((elem as any).webkitRequestFullscreen && !(document as any).webkitFullscreenElement) {
+      // Safari/iOS
+      (elem as any).webkitRequestFullscreen().catch(() => {});
+    }
+  }, [isMobile]);
+
+  // Auto-hide UI on mobile after inactivity
+  const resetUITimer = useCallback(() => {
+    if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
+    setShowUI(true);
+    if (isMobile) {
+      uiTimeoutRef.current = setTimeout(() => {
+        if (!showPersonaMenu && !showVoiceMenu) setShowUI(false);
+      }, UI_HIDE_DELAY);
+    }
+  }, [isMobile, showPersonaMenu, showVoiceMenu]);
+
+  // Handle screen tap to toggle UI
+  const handleScreenTap = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    // Don't toggle if clicking on interactive elements
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('a') || target.closest('[role="button"]')) {
+      return;
+    }
+    
+    if (isMobile) {
+      if (showUI) {
+        setShowUI(false);
+        if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
+      } else {
+        resetUITimer();
+      }
+    }
+  }, [isMobile, showUI, resetUITimer]);
 
   // Stop AI audio
   const stopAIAudio = useCallback(() => {
@@ -78,8 +157,6 @@ export default function ConversePage() {
 
     isProcessingRef.current = true;
     setIsProcessing(true);
-    setCaption(content);
-    setCaptionType('user');
 
     let assistantContent = '';
 
@@ -113,48 +190,154 @@ export default function ConversePage() {
     }
   }, [chat, ttsEnabled]);
 
-  // Handle speech result
+  // Handle speech result with improved deduplication
   const handleSpeechResult = useCallback((transcript: string, isFinal: boolean) => {
-    if (isSpeaking && audioLevel > INTERRUPT_THRESHOLD) {
+    // Check for interrupt
+    if (isSpeaking) {
       stopAIAudio();
     }
     
+    const trimmedTranscript = transcript.trim();
+    if (!trimmedTranscript) return;
+    
     if (isFinal && !isProcessingRef.current) {
-      setUserInput(prev => {
-        const updated = prev + (prev ? ' ' : '') + transcript;
-        lastTranscriptRef.current = updated;
-        return updated;
-      });
+      // DEDUPLICATION: Check if this exact transcript was just added
+      if (trimmedTranscript === lastFinalTranscriptRef.current) {
+        console.log('[Speech] Ignoring duplicate final transcript:', trimmedTranscript);
+        return;
+      }
       
-      setCaption(prev => {
-        const updated = (prev && captionType === 'user' ? prev + ' ' : '') + transcript;
-        return updated;
-      });
+      // SENTENCE-LEVEL DEDUPLICATION: Check if this transcript is already at the end of accumulated text
+      const currentText = accumulatedTextRef.current.toLowerCase();
+      const newText = trimmedTranscript.toLowerCase();
+      if (currentText.endsWith(newText) || currentText.includes(newText)) {
+        console.log('[Speech] Ignoring transcript already in accumulated text:', trimmedTranscript);
+        return;
+      }
+      
+      // WORD-LEVEL DEDUPLICATION: Check if the words are repeats of recent words
+      const words = trimmedTranscript.toLowerCase().split(/\s+/);
+      const recentWords = recentFinalWordsRef.current;
+      
+      // Check if this is a repetition (all words appear in recent final words)
+      const isRepeat = words.length > 0 && words.every(word => 
+        recentWords.slice(-20).includes(word) // Check last 20 words
+      );
+      
+      if (isRepeat && words.length <= 5) {
+        console.log('[Speech] Ignoring likely repeat words:', trimmedTranscript);
+        return;
+      }
+      
+      // OVERLAP DETECTION: Check if new transcript starts with ending of current text
+      if (currentText.length > 0) {
+        // Check for partial overlap (e.g., current ends with "hello world" and new is "world how are you")
+        const currentWords = currentText.split(/\s+/);
+        const newWords = trimmedTranscript.toLowerCase().split(/\s+/);
+        
+        for (let overlap = Math.min(5, newWords.length); overlap >= 1; overlap--) {
+          const endOfCurrent = currentWords.slice(-overlap).join(' ');
+          const startOfNew = newWords.slice(0, overlap).join(' ');
+          
+          if (endOfCurrent === startOfNew) {
+            // Remove the overlapping part from the new transcript
+            const deduplicatedWords = newWords.slice(overlap);
+            if (deduplicatedWords.length === 0) {
+              console.log('[Speech] Ignoring completely overlapping transcript:', trimmedTranscript);
+              return;
+            }
+            console.log('[Speech] Removing overlap from transcript:', startOfNew);
+            // Reconstruct with proper casing from original
+            const originalWords = trimmedTranscript.split(/\s+/);
+            const deduplicatedText = originalWords.slice(overlap).join(' ');
+            
+            // Update tracking and append deduplicated text
+            lastFinalTranscriptRef.current = deduplicatedText;
+            recentFinalWordsRef.current = [...recentFinalWordsRef.current.slice(-30), ...deduplicatedWords];
+            
+            const updatedText = accumulatedTextRef.current + ' ' + deduplicatedText;
+            accumulatedTextRef.current = updatedText;
+            setCaption(updatedText);
+            setCaptionType('user');
+            
+            // Reset silence timeout
+            if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+            
+            silenceTimeoutRef.current = setTimeout(() => {
+              const textToSend = accumulatedTextRef.current.trim();
+              if (textToSend && !isProcessingRef.current) {
+                accumulatedTextRef.current = '';
+                lastFinalTranscriptRef.current = '';
+                recentFinalWordsRef.current = [];
+                sendMessage(textToSend);
+              }
+            }, SILENCE_TIMEOUT);
+            
+            return;
+          }
+        }
+      }
+      
+      // Update tracking
+      lastFinalTranscriptRef.current = trimmedTranscript;
+      recentFinalWordsRef.current = [...recentFinalWordsRef.current.slice(-30), ...words];
+      
+      // Append to accumulated text
+      const newAccumulatedText = currentText ? accumulatedTextRef.current + ' ' + trimmedTranscript : trimmedTranscript;
+      accumulatedTextRef.current = newAccumulatedText;
+      
+      // Update caption
+      setCaption(newAccumulatedText);
       setCaptionType('user');
       
+      // Reset silence timeout
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
       
       silenceTimeoutRef.current = setTimeout(() => {
-        const textToSend = lastTranscriptRef.current.trim();
+        const textToSend = accumulatedTextRef.current.trim();
         if (textToSend && !isProcessingRef.current) {
-          setUserInput('');
-          lastTranscriptRef.current = '';
+          // Clear for next utterance
+          accumulatedTextRef.current = '';
+          lastFinalTranscriptRef.current = '';
+          recentFinalWordsRef.current = [];
           sendMessage(textToSend);
         }
       }, SILENCE_TIMEOUT);
     } else if (!isFinal) {
-      const currentText = lastTranscriptRef.current;
-      setCaption(currentText + (currentText ? ' ' : '') + transcript);
+      // Show interim - accumulated text + current interim
+      // Also apply deduplication to interim display
+      const currentText = accumulatedTextRef.current;
+      const interimLower = trimmedTranscript.toLowerCase();
+      
+      // Check for overlap with accumulated text
+      let displayInterim = trimmedTranscript;
+      if (currentText) {
+        const currentWords = currentText.toLowerCase().split(/\s+/);
+        const interimWords = interimLower.split(/\s+/);
+        
+        for (let overlap = Math.min(3, interimWords.length); overlap >= 1; overlap--) {
+          const endOfCurrent = currentWords.slice(-overlap).join(' ');
+          const startOfInterim = interimWords.slice(0, overlap).join(' ');
+          
+          if (endOfCurrent === startOfInterim) {
+            // Remove overlap from interim display
+            const originalInterimWords = trimmedTranscript.split(/\s+/);
+            displayInterim = originalInterimWords.slice(overlap).join(' ');
+            break;
+          }
+        }
+      }
+      
+      const displayText = currentText + (currentText && displayInterim ? ' ' : '') + displayInterim;
+      setCaption(displayText);
       setCaptionType('user');
     }
-  }, [sendMessage, captionType, isSpeaking, stopAIAudio]);
+  }, [sendMessage, isSpeaking, stopAIAudio]);
 
   const {
     isListening,
     isSupported,
     audioLevel,
-    transcript,
-    interimTranscript,
     startListening,
     stopListening,
     resetTranscript,
@@ -171,10 +354,9 @@ export default function ConversePage() {
     },
   });
 
-  // Update frequency data for user audio (simulated from level)
+  // Update frequency data for user audio
   useEffect(() => {
     if (isListening && !isSpeaking) {
-      // Generate simulated frequency data from audio level
       const newData = new Array(64).fill(0).map((_, i) => {
         const wave = Math.sin(i * 0.3 + Date.now() * 0.005) * 0.3 + 0.7;
         return audioLevel * wave * (0.5 + Math.random() * 0.5);
@@ -193,6 +375,7 @@ export default function ConversePage() {
   // Load personas
   useEffect(() => {
     loadPersonas();
+    loadVoices();
   }, []);
 
   const loadPersonas = async () => {
@@ -200,10 +383,10 @@ export default function ConversePage() {
       const data = await personasApi.list();
       setPersonas(data);
       
-      // Set "Voice Assist" or similar as default persona
+      // Prefer "Voice Assistant" persona for /converse
       const voicePersona = data.find((p: Persona) => 
-        p.name.toLowerCase().includes('voice') || 
-        p.name.toLowerCase().includes('assistant')
+        p.name === 'Voice Assistant' ||
+        p.name.toLowerCase().includes('voice')
       );
       if (voicePersona && !selectedPersona) {
         setSelectedPersona(voicePersona);
@@ -213,10 +396,43 @@ export default function ConversePage() {
     }
   };
 
-  // Initialize chat - now depends on selectedPersona
+  const loadVoices = async () => {
+    try {
+      // Try to load admin-enabled voices first, fall back to TTS voices if not available
+      let voiceList: Voice[] = [];
+      
+      try {
+        const enabledData = await voiceSettings.listEnabled();
+        voiceList = enabledData.voices as Voice[];
+      } catch {
+        // Fall back to TTS voices endpoint
+      }
+      
+      // Fallback: use TTS voices filtered to Medium/High quality
+      if (voiceList.length === 0) {
+        const data = await tts.voices();
+        voiceList = data.voices.filter((v: Voice) => 
+          v.quality === 'Medium' || v.quality === 'High'
+        );
+      }
+      
+      setVoices(voiceList);
+      
+      // Try to restore saved voice from localStorage, otherwise default to Amy
+      const savedVoiceId = typeof window !== 'undefined' ? localStorage.getItem('hal-preferred-voice') : null;
+      const savedVoice = savedVoiceId ? voiceList.find((v: Voice) => v.id === savedVoiceId) : null;
+      const defaultVoice = savedVoice || voiceList.find((v: Voice) => v.id === 'amy');
+      if (defaultVoice && !selectedVoice) {
+        setSelectedVoice(defaultVoice);
+      }
+    } catch (err) {
+      console.error('Failed to load voices:', err);
+    }
+  };
+
+  // Initialize chat
   useEffect(() => {
     const initializeChat = async () => {
-      // Wait for personas to load first
       if (personas.length === 0) return;
       
       try {
@@ -230,7 +446,6 @@ export default function ConversePage() {
         
         if (recentVoiceChat) {
           setChat(recentVoiceChat as Chat);
-          // Update persona if needed
           if (selectedPersona && recentVoiceChat.persona_id !== selectedPersona.id) {
             await chatsApi.update(recentVoiceChat.id, { persona_id: selectedPersona.id });
           }
@@ -255,6 +470,7 @@ export default function ConversePage() {
     
     return () => {
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+      if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
       if (audioRef.current) audioRef.current.pause();
       if (ttsAnimationRef.current) cancelAnimationFrame(ttsAnimationRef.current);
       if (ttsAudioContextRef.current?.state !== 'closed') {
@@ -266,28 +482,36 @@ export default function ConversePage() {
   const handleMicToggleRef = useRef<() => void>(() => {});
 
   const handleMicToggle = useCallback(() => {
+    resetUITimer();
+    requestFullscreen(); // Try to enter fullscreen on first interaction
+    
     if (isListening) {
       stopListening();
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-      if (userInput.trim() && !isProcessingRef.current) {
-        sendMessage(userInput.trim());
-        setUserInput('');
-        lastTranscriptRef.current = '';
+      const textToSend = accumulatedTextRef.current.trim();
+      if (textToSend && !isProcessingRef.current) {
+        accumulatedTextRef.current = '';
+        lastFinalTranscriptRef.current = '';
+        recentFinalWordsRef.current = [];
+        sendMessage(textToSend);
       }
     } else {
       if (isSpeaking) stopAIAudio();
       resetTranscript();
-      setUserInput('');
+      accumulatedTextRef.current = '';
+      lastFinalTranscriptRef.current = '';
+      recentFinalWordsRef.current = [];
       setCaption('');
       setCaptionType('status');
       startListening();
     }
-  }, [isListening, stopListening, userInput, sendMessage, isSpeaking, stopAIAudio, resetTranscript, startListening]);
+  }, [isListening, stopListening, sendMessage, isSpeaking, stopAIAudio, resetTranscript, startListening, resetUITimer, requestFullscreen]);
 
   useEffect(() => {
     handleMicToggleRef.current = handleMicToggle;
   }, [handleMicToggle]);
 
+  // Desktop: space bar to toggle
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat && document.activeElement?.tagName !== 'INPUT') {
@@ -302,6 +526,7 @@ export default function ConversePage() {
   const handlePersonaChange = async (persona: Persona | null) => {
     setSelectedPersona(persona);
     setShowPersonaMenu(false);
+    resetUITimer();
     if (chat) {
       try {
         await chatsApi.update(chat.id, { persona_id: persona?.id || null });
@@ -312,12 +537,23 @@ export default function ConversePage() {
     }
   };
 
+  const handleVoiceChange = (voice: Voice) => {
+    setSelectedVoice(voice);
+    setShowVoiceMenu(false);
+    resetUITimer();
+    // Persist voice preference
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('hal-preferred-voice', voice.id);
+    }
+    toast.success(`Voice changed to ${voice.name}`);
+  };
+
   const playTTS = async (text: string) => {
     if (!ttsEnabled || !text.trim()) return;
     setIsSpeaking(true);
     
     try {
-      const blob = await tts.generate(text);
+      const blob = await tts.generate(text, selectedVoice?.id);
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
@@ -347,7 +583,6 @@ export default function ConversePage() {
             const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
             setTtsAudioLevel(Math.min(1, average / 128));
             
-            // Convert to normalized array for visualization
             const normalized = Array.from(dataArray).map(v => v / 255);
             setFrequencyData(normalized);
             
@@ -382,6 +617,7 @@ export default function ConversePage() {
 
   const handleTTSToggle = () => {
     setTtsEnabled(!ttsEnabled);
+    resetUITimer();
     if (audioRef.current && ttsEnabled) stopAIAudio();
   };
 
@@ -399,12 +635,18 @@ export default function ConversePage() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-[#0a0a1a] overflow-hidden">
-      {/* Gradient background overlay */}
+    <div 
+      className="h-full flex flex-col bg-[#0a0a1a] overflow-hidden relative"
+      onClick={handleScreenTap}
+      onTouchEnd={handleScreenTap}
+    >
+      {/* Full-screen gradient background */}
       <div className="absolute inset-0 bg-gradient-to-b from-purple-900/10 via-transparent to-purple-900/20 pointer-events-none" />
       
-      {/* Header */}
-      <header className="relative z-10 h-14 flex items-center justify-between px-4 bg-black/20 backdrop-blur-sm border-b border-white/5">
+      {/* Header - auto-hides on mobile */}
+      <header className={`absolute top-0 left-0 right-0 z-20 h-14 flex items-center justify-between px-4 bg-black/40 backdrop-blur-sm border-b border-white/5 transition-all duration-300 ${
+        showUI ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full pointer-events-none'
+      }`}>
         <div className="flex items-center gap-3">
           <Link href="/chat" className="p-2 hover:bg-white/10 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5 text-gray-400" />
@@ -415,7 +657,7 @@ export default function ConversePage() {
         <div className="flex items-center gap-2">
           <div className="relative">
             <button
-              onClick={() => setShowPersonaMenu(!showPersonaMenu)}
+              onClick={(e) => { e.stopPropagation(); setShowPersonaMenu(!showPersonaMenu); setShowVoiceMenu(false); }}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
             >
               <span className="text-lg">{selectedPersona?.avatar_emoji || '🤖'}</span>
@@ -428,7 +670,7 @@ export default function ConversePage() {
             {showPersonaMenu && (
               <div className="absolute right-0 top-full mt-2 w-64 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-white/10 py-2 z-50">
                 <button
-                  onClick={() => handlePersonaChange(null)}
+                  onClick={(e) => { e.stopPropagation(); handlePersonaChange(null); }}
                   className={`w-full px-4 py-2 text-left hover:bg-white/10 flex items-center gap-3 ${!selectedPersona ? 'bg-white/5' : ''}`}
                 >
                   <span className="text-xl">🤖</span>
@@ -440,7 +682,7 @@ export default function ConversePage() {
                 {personas.map(p => (
                   <button
                     key={p.id}
-                    onClick={() => handlePersonaChange(p)}
+                    onClick={(e) => { e.stopPropagation(); handlePersonaChange(p); }}
                     className={`w-full px-4 py-2 text-left hover:bg-white/10 flex items-center gap-3 ${selectedPersona?.id === p.id ? 'bg-white/5' : ''}`}
                   >
                     <span className="text-xl">{p.avatar_emoji}</span>
@@ -455,21 +697,79 @@ export default function ConversePage() {
           </div>
           
           <button
-            onClick={handleTTSToggle}
+            onClick={(e) => { e.stopPropagation(); handleTTSToggle(); }}
             className={`p-2 rounded-lg transition-colors ${ttsEnabled ? 'bg-purple-500/20 text-purple-400' : 'text-gray-500 hover:bg-white/10'}`}
           >
             {ttsEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
           </button>
+          
+          {/* Voice Selection */}
+          <div className="relative">
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowVoiceMenu(!showVoiceMenu); setShowPersonaMenu(false); }}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+            >
+              <Globe className="w-4 h-4 text-gray-400" />
+              <span className="text-sm text-gray-300 hidden sm:inline">
+                {selectedVoice?.accent === 'British' ? '🇬🇧' : '🇺🇸'} {selectedVoice?.name || 'Amy'}
+              </span>
+              <ChevronDown className="w-4 h-4 text-gray-400" />
+            </button>
+            
+            {showVoiceMenu && (
+              <div className="absolute right-0 top-full mt-2 w-72 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-white/10 py-2 z-50 max-h-80 overflow-y-auto">
+                {/* American voices */}
+                <div className="px-4 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  🇺🇸 American
+                </div>
+                {voices.filter(v => v.accent === 'American').map(v => (
+                  <button
+                    key={v.id}
+                    onClick={(e) => { e.stopPropagation(); handleVoiceChange(v); }}
+                    className={`w-full px-4 py-2 text-left hover:bg-white/10 flex items-center justify-between ${selectedVoice?.id === v.id ? 'bg-white/5' : ''}`}
+                  >
+                    <div>
+                      <div className="text-white text-sm">{v.name}</div>
+                      <div className="text-gray-500 text-xs">{v.quality} • {v.gender}</div>
+                    </div>
+                    {selectedVoice?.id === v.id && (
+                      <div className="w-2 h-2 rounded-full bg-purple-500" />
+                    )}
+                  </button>
+                ))}
+                
+                {/* British voices */}
+                <div className="px-4 py-1 mt-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-white/10 pt-2">
+                  🇬🇧 British
+                </div>
+                {voices.filter(v => v.accent === 'British').map(v => (
+                  <button
+                    key={v.id}
+                    onClick={(e) => { e.stopPropagation(); handleVoiceChange(v); }}
+                    className={`w-full px-4 py-2 text-left hover:bg-white/10 flex items-center justify-between ${selectedVoice?.id === v.id ? 'bg-white/5' : ''}`}
+                  >
+                    <div>
+                      <div className="text-white text-sm">{v.name}</div>
+                      <div className="text-gray-500 text-xs">{v.quality} • {v.gender}</div>
+                    </div>
+                    {selectedVoice?.id === v.id && (
+                      <div className="w-2 h-2 rounded-full bg-purple-500" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-4">
-        {/* Glowing Ring Visualizer */}
+      {/* Main content - full screen visualization */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center px-4">
+        {/* Glowing Ring - clickable to toggle mic */}
         <button
-          onClick={handleMicToggle}
+          onClick={(e) => { e.stopPropagation(); handleMicToggle(); }}
           disabled={isProcessing}
-          className="relative focus:outline-none"
+          className="relative focus:outline-none z-10"
         >
           <GlowingRing 
             audioLevel={currentAudioLevel}
@@ -477,11 +777,12 @@ export default function ConversePage() {
             isProcessing={isProcessing}
             isAI={isSpeaking}
             isListening={isListening}
+            fullScreen={isMobile}
           />
         </button>
 
         {/* Status text */}
-        <p className={`mt-8 text-xl font-light tracking-wide transition-colors ${
+        <p className={`mt-8 text-xl font-light tracking-wide transition-colors z-10 ${
           isListening ? 'text-cyan-400' 
           : isSpeaking ? 'text-purple-400' 
           : isProcessing ? 'text-purple-300'
@@ -494,7 +795,7 @@ export default function ConversePage() {
         </p>
 
         {/* Waveform Visualizer */}
-        <div className="mt-8 w-full max-w-lg">
+        <div className="mt-8 w-full max-w-lg z-10">
           <WaveformVisualizer 
             frequencyData={frequencyData}
             isActive={isListening || isSpeaking}
@@ -504,7 +805,7 @@ export default function ConversePage() {
 
         {/* Caption display */}
         {caption && (
-          <div className="mt-6 max-w-2xl text-center">
+          <div className="mt-6 max-w-2xl text-center z-10 px-4">
             <p className={`text-base leading-relaxed ${
               captionType === 'user' ? 'text-cyan-300/80' : 'text-purple-300/80'
             }`}>
@@ -515,48 +816,54 @@ export default function ConversePage() {
 
         {/* Error display */}
         {speechError && !speechError.includes('No speech detected') && (
-          <div className="mt-4 text-red-400 text-sm bg-red-500/10 px-4 py-2 rounded-lg">
+          <div className="mt-4 text-red-400 text-sm bg-red-500/10 px-4 py-2 rounded-lg z-10">
             {speechError}
           </div>
         )}
       </div>
 
-      {/* Bottom input bar (visual only for now) */}
-      <div className="relative z-10 p-4">
-        <div className="max-w-lg mx-auto flex items-center gap-3 bg-white/5 backdrop-blur-sm rounded-full px-4 py-3 border border-white/10">
-          <div className="flex-1 text-gray-500 text-sm">
-            {isListening ? 'Listening...' : 'Press space or tap circle to speak'}
+      {/* Bottom controls - ONLY show on desktop */}
+      {!isMobile && (
+        <div className={`absolute bottom-0 left-0 right-0 z-20 p-4 transition-all duration-300 ${
+          showUI ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'
+        }`}>
+          <div className="max-w-lg mx-auto flex items-center gap-3 bg-white/5 backdrop-blur-sm rounded-full px-4 py-3 border border-white/10">
+            <div className="flex-1 text-gray-500 text-sm">
+              {isListening ? 'Listening...' : 'Press space or tap circle to speak'}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleMicToggle(); }}
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${
+                isListening 
+                  ? 'bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-purple-500/30' 
+                  : 'bg-purple-600 hover:bg-purple-500'
+              }`}
+            >
+              <Mic className="w-6 h-6 text-white" />
+            </button>
           </div>
-          <button
-            onClick={handleMicToggle}
-            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-              isListening 
-                ? 'bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-purple-500/30' 
-                : 'bg-purple-600 hover:bg-purple-500'
-            }`}
-          >
-            <Mic className="w-5 h-5 text-white" />
-          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
 
-// Glowing Ring Component - highly dynamic audio visualization
+// Glowing Ring Component
 function GlowingRing({ 
   audioLevel, 
   isActive, 
   isProcessing,
   isAI = false,
-  isListening = false
+  isListening = false,
+  fullScreen = false
 }: { 
   audioLevel: number;
   isActive: boolean;
   isProcessing: boolean;
   isAI?: boolean;
   isListening?: boolean;
+  fullScreen?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
@@ -572,45 +879,40 @@ function GlowingRing({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const size = 320;
+    const size = fullScreen ? 400 : 320;
     canvas.width = size;
     canvas.height = size;
     
     const centerX = size / 2;
     const centerY = size / 2;
-    const baseRadius = 80;
+    const baseRadius = fullScreen ? 100 : 80;
 
     const draw = () => {
       ctx.clearRect(0, 0, size, size);
       
-      // Faster audio response for more dynamic feel
       smoothedLevelRef.current += (audioLevel - smoothedLevelRef.current) * 0.3;
       const level = smoothedLevelRef.current;
       
-      // Track peak for extra punch
       if (level > peakRef.current) {
         peakRef.current = level;
       } else {
         peakRef.current *= 0.95;
       }
       
-      // Update history for trailing effect
       historyRef.current.push(level);
       historyRef.current.shift();
       
-      // Color schemes
-      let hue1 = 270; // purple
+      let hue1 = 270;
       let hue2 = 280;
       
       if (isListening) {
-        hue1 = 185; // cyan
-        hue2 = 270; // to purple
+        hue1 = 185;
+        hue2 = 270;
       } else if (isAI) {
-        hue1 = 280; // purple
-        hue2 = 330; // to pink
+        hue1 = 280;
+        hue2 = 330;
       }
 
-      // Dynamic outer glow - pulses with audio
       const glowIntensity = 0.15 + level * 0.4 + peakRef.current * 0.2;
       for (let i = 5; i >= 0; i--) {
         const glowRadius = baseRadius + 30 + i * 20 + level * 40;
@@ -629,7 +931,6 @@ function GlowingRing({
         ctx.fill();
       }
 
-      // Animated wave ring - the main visual
       const segments = 120;
       const ringRadius = baseRadius + 10 + level * 25;
       
@@ -637,12 +938,10 @@ function GlowingRing({
       for (let i = 0; i <= segments; i++) {
         const angle = (i / segments) * Math.PI * 2;
         
-        // Multiple wave frequencies for organic feel
         const wave1 = Math.sin(angle * 8 + phaseRef.current * 3) * (8 + level * 20);
         const wave2 = Math.sin(angle * 4 - phaseRef.current * 2) * (4 + level * 12);
         const wave3 = Math.sin(angle * 12 + phaseRef.current * 5) * (level * 8);
         
-        // Audio-reactive amplitude
         const historyIndex = Math.floor((i / segments) * historyRef.current.length);
         const historyLevel = historyRef.current[historyIndex] || 0;
         const audioWave = historyLevel * 30;
@@ -660,7 +959,6 @@ function GlowingRing({
       }
       ctx.closePath();
       
-      // Gradient stroke for the wave ring
       const ringGradient = ctx.createLinearGradient(
         centerX - ringRadius - 50, centerY - ringRadius - 50,
         centerX + ringRadius + 50, centerY + ringRadius + 50
@@ -673,7 +971,6 @@ function GlowingRing({
       ctx.lineWidth = 3 + level * 4;
       ctx.stroke();
       
-      // Fill with subtle gradient
       const fillGradient = ctx.createRadialGradient(
         centerX, centerY, 0,
         centerX, centerY, ringRadius + 40
@@ -684,7 +981,6 @@ function GlowingRing({
       ctx.fillStyle = fillGradient;
       ctx.fill();
 
-      // Energy particles that respond to audio
       if (isActive || isProcessing) {
         const particleCount = Math.floor(12 + level * 20);
         
@@ -704,7 +1000,6 @@ function GlowingRing({
           ctx.fillStyle = `hsla(${hue1 + (i * 3)}, 80%, 70%, ${alpha})`;
           ctx.fill();
           
-          // Particle trail
           if (level > 0.1) {
             ctx.beginPath();
             ctx.moveTo(x, y);
@@ -718,7 +1013,6 @@ function GlowingRing({
         }
       }
 
-      // Inner pulsing core
       const coreRadius = 25 + level * 15 + Math.sin(phaseRef.current * 2) * 5;
       const coreGradient = ctx.createRadialGradient(
         centerX, centerY, 0,
@@ -739,20 +1033,22 @@ function GlowingRing({
 
     draw();
     return () => cancelAnimationFrame(animationRef.current);
-  }, [audioLevel, isActive, isProcessing, isAI, isListening]);
+  }, [audioLevel, isActive, isProcessing, isAI, isListening, fullScreen]);
+
+  const sizeClass = fullScreen ? 'w-[400px] h-[400px]' : 'w-[320px] h-[320px]';
 
   return (
     <div className="relative cursor-pointer group">
       <canvas 
         ref={canvasRef} 
-        className="w-[320px] h-[320px] transition-transform group-hover:scale-105 group-active:scale-95"
+        className={`${sizeClass} transition-transform group-hover:scale-105 group-active:scale-95`}
       />
     </div>
   );
 }
 
 
-// Waveform Visualizer Component - flowing audio-reactive waves
+// Waveform Visualizer Component
 function WaveformVisualizer({ 
   frequencyData, 
   isActive,
@@ -783,14 +1079,13 @@ function WaveformVisualizer({
     const draw = () => {
       ctx.clearRect(0, 0, width, height);
       
-      // Smooth with spring physics for bouncy feel
       for (let i = 0; i < smoothedDataRef.current.length; i++) {
         const target = frequencyData[i] || 0;
         const current = smoothedDataRef.current[i];
         const diff = target - current;
         
         velocityRef.current[i] += diff * 0.3;
-        velocityRef.current[i] *= 0.7; // damping
+        velocityRef.current[i] *= 0.7;
         smoothedDataRef.current[i] += velocityRef.current[i];
       }
       
@@ -798,11 +1093,9 @@ function WaveformVisualizer({
       const centerY = height / 2;
       const avgLevel = data.reduce((a, b) => a + b, 0) / data.length;
       
-      // Colors
       const hue1 = isAI ? 280 : 185;
       const hue2 = isAI ? 330 : 270;
 
-      // Draw multiple wave layers for depth
       for (let layer = 2; layer >= 0; layer--) {
         const layerOffset = layer * 0.3;
         const layerAlpha = 0.15 + (2 - layer) * 0.25;
@@ -815,7 +1108,6 @@ function WaveformVisualizer({
           const x = (i / segments) * width;
           const dataIndex = Math.floor((i / segments) * data.length);
           
-          // Get surrounding data for smoother interpolation
           const d0 = data[Math.max(0, dataIndex - 1)] || 0;
           const d1 = data[dataIndex] || 0;
           const d2 = data[Math.min(data.length - 1, dataIndex + 1)] || 0;
@@ -823,7 +1115,6 @@ function WaveformVisualizer({
           
           const amplitude = interpolated * 50 * layerScale;
           
-          // Flowing wave motion
           const wave1 = Math.sin(i * 0.12 + phaseRef.current * 2 + layerOffset) * (6 + avgLevel * 15);
           const wave2 = Math.sin(i * 0.06 + phaseRef.current * 1.3 - layerOffset) * (10 + avgLevel * 20);
           const wave3 = Math.sin(i * 0.2 + phaseRef.current * 3 + layer) * (avgLevel * 10);
@@ -835,11 +1126,9 @@ function WaveformVisualizer({
           points.push({ x, y: centerY - totalY });
         }
 
-        // Create smooth curve through points
         ctx.beginPath();
         ctx.moveTo(0, centerY);
         
-        // Bezier curve for smoothness
         for (let i = 0; i < points.length - 1; i++) {
           const p0 = points[Math.max(0, i - 1)];
           const p1 = points[i];
@@ -857,14 +1146,12 @@ function WaveformVisualizer({
         ctx.lineTo(width, centerY);
         ctx.closePath();
         
-        // Gradient fill
         const fillGradient = ctx.createLinearGradient(0, centerY - 60, 0, centerY);
         fillGradient.addColorStop(0, `hsla(${hue1}, 80%, 60%, ${layerAlpha * 0.5})`);
         fillGradient.addColorStop(1, `hsla(${hue2}, 80%, 50%, ${layerAlpha * 0.1})`);
         ctx.fillStyle = fillGradient;
         ctx.fill();
         
-        // Stroke
         const strokeGradient = ctx.createLinearGradient(0, 0, width, 0);
         strokeGradient.addColorStop(0, `hsla(${hue1}, 85%, 65%, ${layerAlpha * 0.5})`);
         strokeGradient.addColorStop(0.5, `hsla(${(hue1 + hue2) / 2}, 85%, 70%, ${layerAlpha})`);
@@ -873,7 +1160,6 @@ function WaveformVisualizer({
         ctx.lineWidth = 2 - layer * 0.5;
         ctx.stroke();
         
-        // Mirror bottom wave
         ctx.beginPath();
         ctx.moveTo(0, centerY);
         for (let i = 0; i < points.length - 1; i++) {
@@ -894,7 +1180,6 @@ function WaveformVisualizer({
         ctx.lineTo(width, centerY);
         ctx.closePath();
         
-        // Mirrored gradient (flip colors)
         const mirrorFillGradient = ctx.createLinearGradient(0, centerY, 0, centerY + 60);
         mirrorFillGradient.addColorStop(0, `hsla(${hue2}, 80%, 50%, ${layerAlpha * 0.1})`);
         mirrorFillGradient.addColorStop(1, `hsla(${hue1}, 80%, 60%, ${layerAlpha * 0.5})`);
@@ -904,7 +1189,6 @@ function WaveformVisualizer({
         ctx.stroke();
       }
 
-      // Center glow line
       const glowGradient = ctx.createLinearGradient(0, 0, width, 0);
       glowGradient.addColorStop(0, `hsla(${hue1}, 70%, 70%, 0)`);
       glowGradient.addColorStop(0.5, `hsla(${hue2}, 70%, 80%, ${0.3 + avgLevel * 0.4})`);

@@ -30,8 +30,8 @@ export default function AlertsDropdown({ onClose }: { onClose: () => void }) {
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="absolute right-0 top-full mt-2 w-80 bg-bg-elevated border border-border rounded-lg shadow-lg z-50 max-h-96 overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+      <div className="absolute right-0 top-full mt-2 w-80 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-lg shadow-lg z-50 max-h-96 overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <h3 className="font-medium text-text-primary">Notifications</h3>
           <button
             onClick={() => markAllRead()}
@@ -55,8 +55,8 @@ export default function AlertsDropdown({ onClose }: { onClose: () => void }) {
                 <div
                   key={alert.id}
                   onClick={() => handleAlertClick(alert.id, alert.is_read)}
-                  className={`px-4 py-3 border-b border-border hover:bg-surface cursor-pointer transition-colors ${
-                    !alert.is_read ? 'bg-surface/50' : ''
+                  className={`px-4 py-3 border-b border-white/10 hover:bg-white/5 cursor-pointer transition-colors ${
+                    !alert.is_read ? 'bg-white/5' : ''
                   }`}
                 >
                   <div className="flex gap-3">
