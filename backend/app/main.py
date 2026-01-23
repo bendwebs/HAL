@@ -59,6 +59,22 @@ async def lifespan(app: FastAPI):
     tool_executor = get_tool_executor()
     await tool_executor.initialize_tools_in_db()
     
+    # Preload STT model in background (non-blocking)
+    # This ensures the model is ready when /converse is used
+    import asyncio
+    async def preload_stt():
+        try:
+            from app.services.stt_service import get_stt_service
+            logger.info("Preloading Whisper STT model...")
+            stt = get_stt_service()
+            await stt.initialize()
+            logger.info("Whisper STT model ready")
+        except Exception as e:
+            logger.warning(f"STT preload failed (will load on first use): {e}")
+    
+    # Run in background so startup isn't blocked
+    asyncio.create_task(preload_stt())
+    
     # Create default admin user if not exists
     await create_default_admin()
     
@@ -108,6 +124,7 @@ from app.routers.tts import router as tts_router
 from app.routers.web_search import router as web_search_router
 from app.routers.voice_settings import router as voice_settings_router
 from app.routers.youtube import router as youtube_router
+from app.routers.stt import router as stt_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -122,6 +139,7 @@ app.include_router(tts_router, prefix="/api")
 app.include_router(web_search_router, prefix="/api")
 app.include_router(voice_settings_router, prefix="/api")
 app.include_router(youtube_router, prefix="/api")
+app.include_router(stt_router, prefix="/api")
 
 
 # Health check endpoint

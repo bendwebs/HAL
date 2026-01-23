@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # YouTube API
     youtube_api_key: Optional[str] = None
     
+    # Speech-to-Text (faster-whisper)
+    # Models: tiny, base, small, medium, large-v2, large-v3, large-v3-turbo (recommended)
+    # large-v3-turbo is ~4x faster than large-v3 with similar accuracy
+    whisper_model_size: str = "large-v3-turbo"
+    whisper_device: str = "cuda"  # cuda or cpu
+    whisper_compute_type: str = "float16"  # float16, int8, int8_float16
+    
     # Server
     api_prefix: str = "/api"
     debug: bool = True

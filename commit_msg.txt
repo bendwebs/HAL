@@ -1,23 +1,24 @@
-Add voice management admin and fix caption deduplication
-
-Features:
-- Add /admin/voices page for managing TTS voices
-- Admin can enable/disable voices for /converse page
-- Voices grouped by quality (High, Medium, Low, Coming Soon)
-- Coming Soon section for future premium voices (ElevenLabs, OpenAI)
-- Voice selection persisted to localStorage
-
-Fixes:
-- Improved speech recognition deduplication
-- Added asterisk restriction to Voice Assistant system prompt
-- Fixed database collection name (system_config instead of settings)
+Add YouTube video search and embed functionality
 
 Backend:
-- New voice_settings router with CRUD endpoints
-- Voice settings stored in system_config collection
-- Migration script for updating existing Voice Assistant persona
+- Add YouTubeService with YouTube Data API v3 integration
+- Add youtube_search tool to agent system with auto-retry logic
+- Pass full structured result for YouTube actions (not just text)
+- Add confidence scoring for video search results
+- Add youtube router for recording user selections
 
 Frontend:
-- Updated converse page to fetch admin-enabled voices
-- Added voiceSettings API client
-- Admin quick action button for voice management
+- Add YouTubeResults component with embedded video player
+- Add VideoPlayer floating/draggable component for pop-out playback
+- Add ToolToggle component for per-chat tool settings
+- Update ChatMessage to render YouTube results inline
+- Hide text response when YouTube embed is displayed
+- Add play command parsing (play 1, play first, etc.)
+- Restore YouTube results from message history on page load
+- Fix api import in YouTubeResults component
+
+Features:
+- Videos embed directly in chat with thumbnail selection
+- Click to play inline or pop out to floating player
+- Confidence-based auto-play for high-match results
+- Selection tracking for training data collection

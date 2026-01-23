@@ -177,12 +177,12 @@ Last Updated: 2025-01-22
 - [x] Voice caching
 - [x] Multiple voice support
 
-### 6.2 Converse Mode (In Progress)
+### 6.2 Converse Mode ✅
 - [x] Voice input UI
 - [x] Audio waveform visualization
 - [x] Closed captions display
-- [ ] Full voice conversation flow
-- [ ] Speech-to-text integration
+- [x] Full voice conversation flow
+- [x] Speech-to-text integration (faster-whisper, local GPU)
 
 ---
 
@@ -198,14 +198,21 @@ Last Updated: 2025-01-22
 
 ## Next Steps
 
-1. **Complete voice conversation flow** - Full STT + chat + TTS loop
-2. **Tool calling enhancement** - Better agent/tool integration
-3. **Mobile polish** - Responsive design improvements
-4. **Stable Diffusion integration** - Image generation
+1. **Tool calling enhancement** - Better agent/tool integration
+2. **Mobile polish** - Responsive design improvements
+3. **Stable Diffusion integration** - Image generation
+4. **Sub-agent system** - Agent spawning with depth tracking
 
 ---
 
 ## Changelog
+
+### 2025-01-23
+- Added faster-whisper STT backend service for local GPU transcription
+- Replaced Web Speech API with Whisper in /converse voice mode
+- Eliminated duplicate text issues in voice transcription
+- Added STT status indicator in voice mode header
+- New API endpoints: /api/stt/transcribe, /api/stt/status, /api/stt/initialize
 
 ### 2025-01-22
 - Added Admin User Management page with full CRUD

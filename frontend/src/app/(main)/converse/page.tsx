@@ -2,10 +2,11 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { chats as chatsApi, messages as messagesApi, tts, personas as personasApi, voiceSettings } from '@/lib/api';
+import { chats as chatsApi, messages as messagesApi, tts, personas as personasApi, voiceSettings, stt } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
-import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
-import { ArrowLeft, Volume2, VolumeX, ChevronDown, Mic, Globe } from 'lucide-react';
+import { useUIStore } from '@/stores/ui';
+import { useWhisperSTT } from '@/hooks/useWhisperSTT';
+import { ArrowLeft, Volume2, VolumeX, ChevronDown, Mic, Globe, Cpu } from 'lucide-react';
 import { Chat, StreamChunk } from '@/types';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
@@ -39,6 +40,7 @@ interface Voice {
 export default function ConversePage() {
   const router = useRouter();
   const { user } = useAuthStore();
+  const { refreshChatList } = useUIStore();
   
   // Chat state
   const [chat, setChat] = useState<Chat | null>(null);
@@ -76,12 +78,18 @@ export default function ConversePage() {
   const [caption, setCaption] = useState<string>('');
   const [captionType, setCaptionType] = useState<'user' | 'assistant' | 'status'>('status');
   
-  // Input management - use refs to avoid stale closure issues
-  const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const accumulatedTextRef = useRef('');
+  // STT status
+  const [sttReady, setSttReady] = useState<boolean | null>(null);
+  
+  // Input management
   const isProcessingRef = useRef(false);
-  const lastFinalTranscriptRef = useRef(''); // Track to prevent duplicates
-  const recentFinalWordsRef = useRef<string[]>([]); // Track recent final words for better deduplication
+  const chatInitializedRef = useRef(false);
+  const selectedPersonaRef = useRef(selectedPersona);
+  
+  // Keep ref in sync
+  useEffect(() => {
+    selectedPersonaRef.current = selectedPersona;
+  }, [selectedPersona]);
 
   // Detect mobile
   useEffect(() => {
@@ -179,6 +187,9 @@ export default function ConversePage() {
         await playTTS(assistantContent);
       }
       
+      // Refresh chat list to show updated conversation
+      refreshChatList();
+      
     } catch (err) {
       console.error('Failed to send message:', err);
       toast.error('Failed to get response');
@@ -188,171 +199,74 @@ export default function ConversePage() {
       isProcessingRef.current = false;
       setIsProcessing(false);
     }
-  }, [chat, ttsEnabled]);
+  }, [chat, ttsEnabled, refreshChatList]);
 
-  // Handle speech result with improved deduplication
-  const handleSpeechResult = useCallback((transcript: string, isFinal: boolean) => {
-    // Check for interrupt
+  // Handle Whisper transcription result - much simpler than Web Speech API
+  const handleWhisperTranscript = useCallback((text: string, isFinal: boolean) => {
+    // Check for interrupt - if user starts speaking while AI is speaking
     if (isSpeaking) {
       stopAIAudio();
     }
     
-    const trimmedTranscript = transcript.trim();
-    if (!trimmedTranscript) return;
+    const trimmedText = text.trim();
+    if (!trimmedText) return;
     
+    // Show the transcribed text
+    setCaption(trimmedText);
+    setCaptionType('user');
+    
+    // Whisper gives us clean, final transcripts - send immediately
     if (isFinal && !isProcessingRef.current) {
-      // DEDUPLICATION: Check if this exact transcript was just added
-      if (trimmedTranscript === lastFinalTranscriptRef.current) {
-        console.log('[Speech] Ignoring duplicate final transcript:', trimmedTranscript);
-        return;
-      }
-      
-      // SENTENCE-LEVEL DEDUPLICATION: Check if this transcript is already at the end of accumulated text
-      const currentText = accumulatedTextRef.current.toLowerCase();
-      const newText = trimmedTranscript.toLowerCase();
-      if (currentText.endsWith(newText) || currentText.includes(newText)) {
-        console.log('[Speech] Ignoring transcript already in accumulated text:', trimmedTranscript);
-        return;
-      }
-      
-      // WORD-LEVEL DEDUPLICATION: Check if the words are repeats of recent words
-      const words = trimmedTranscript.toLowerCase().split(/\s+/);
-      const recentWords = recentFinalWordsRef.current;
-      
-      // Check if this is a repetition (all words appear in recent final words)
-      const isRepeat = words.length > 0 && words.every(word => 
-        recentWords.slice(-20).includes(word) // Check last 20 words
-      );
-      
-      if (isRepeat && words.length <= 5) {
-        console.log('[Speech] Ignoring likely repeat words:', trimmedTranscript);
-        return;
-      }
-      
-      // OVERLAP DETECTION: Check if new transcript starts with ending of current text
-      if (currentText.length > 0) {
-        // Check for partial overlap (e.g., current ends with "hello world" and new is "world how are you")
-        const currentWords = currentText.split(/\s+/);
-        const newWords = trimmedTranscript.toLowerCase().split(/\s+/);
-        
-        for (let overlap = Math.min(5, newWords.length); overlap >= 1; overlap--) {
-          const endOfCurrent = currentWords.slice(-overlap).join(' ');
-          const startOfNew = newWords.slice(0, overlap).join(' ');
-          
-          if (endOfCurrent === startOfNew) {
-            // Remove the overlapping part from the new transcript
-            const deduplicatedWords = newWords.slice(overlap);
-            if (deduplicatedWords.length === 0) {
-              console.log('[Speech] Ignoring completely overlapping transcript:', trimmedTranscript);
-              return;
-            }
-            console.log('[Speech] Removing overlap from transcript:', startOfNew);
-            // Reconstruct with proper casing from original
-            const originalWords = trimmedTranscript.split(/\s+/);
-            const deduplicatedText = originalWords.slice(overlap).join(' ');
-            
-            // Update tracking and append deduplicated text
-            lastFinalTranscriptRef.current = deduplicatedText;
-            recentFinalWordsRef.current = [...recentFinalWordsRef.current.slice(-30), ...deduplicatedWords];
-            
-            const updatedText = accumulatedTextRef.current + ' ' + deduplicatedText;
-            accumulatedTextRef.current = updatedText;
-            setCaption(updatedText);
-            setCaptionType('user');
-            
-            // Reset silence timeout
-            if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-            
-            silenceTimeoutRef.current = setTimeout(() => {
-              const textToSend = accumulatedTextRef.current.trim();
-              if (textToSend && !isProcessingRef.current) {
-                accumulatedTextRef.current = '';
-                lastFinalTranscriptRef.current = '';
-                recentFinalWordsRef.current = [];
-                sendMessage(textToSend);
-              }
-            }, SILENCE_TIMEOUT);
-            
-            return;
-          }
-        }
-      }
-      
-      // Update tracking
-      lastFinalTranscriptRef.current = trimmedTranscript;
-      recentFinalWordsRef.current = [...recentFinalWordsRef.current.slice(-30), ...words];
-      
-      // Append to accumulated text
-      const newAccumulatedText = currentText ? accumulatedTextRef.current + ' ' + trimmedTranscript : trimmedTranscript;
-      accumulatedTextRef.current = newAccumulatedText;
-      
-      // Update caption
-      setCaption(newAccumulatedText);
-      setCaptionType('user');
-      
-      // Reset silence timeout
-      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-      
-      silenceTimeoutRef.current = setTimeout(() => {
-        const textToSend = accumulatedTextRef.current.trim();
-        if (textToSend && !isProcessingRef.current) {
-          // Clear for next utterance
-          accumulatedTextRef.current = '';
-          lastFinalTranscriptRef.current = '';
-          recentFinalWordsRef.current = [];
-          sendMessage(textToSend);
-        }
-      }, SILENCE_TIMEOUT);
-    } else if (!isFinal) {
-      // Show interim - accumulated text + current interim
-      // Also apply deduplication to interim display
-      const currentText = accumulatedTextRef.current;
-      const interimLower = trimmedTranscript.toLowerCase();
-      
-      // Check for overlap with accumulated text
-      let displayInterim = trimmedTranscript;
-      if (currentText) {
-        const currentWords = currentText.toLowerCase().split(/\s+/);
-        const interimWords = interimLower.split(/\s+/);
-        
-        for (let overlap = Math.min(3, interimWords.length); overlap >= 1; overlap--) {
-          const endOfCurrent = currentWords.slice(-overlap).join(' ');
-          const startOfInterim = interimWords.slice(0, overlap).join(' ');
-          
-          if (endOfCurrent === startOfInterim) {
-            // Remove overlap from interim display
-            const originalInterimWords = trimmedTranscript.split(/\s+/);
-            displayInterim = originalInterimWords.slice(overlap).join(' ');
-            break;
-          }
-        }
-      }
-      
-      const displayText = currentText + (currentText && displayInterim ? ' ' : '') + displayInterim;
-      setCaption(displayText);
-      setCaptionType('user');
+      console.log('[Whisper] Sending transcribed text:', trimmedText);
+      sendMessage(trimmedText);
     }
   }, [sendMessage, isSpeaking, stopAIAudio]);
 
+  // Use Whisper STT hook - optimized for low latency
   const {
     isListening,
+    isProcessing: isTranscribing,
     isSupported,
     audioLevel,
+    transcript,
+    error: speechError,
     startListening,
     stopListening,
     resetTranscript,
-    error: speechError,
-  } = useSpeechRecognition({
-    continuous: true,
-    interimResults: true,
-    language: 'en-US',
-    onResult: handleSpeechResult,
+  } = useWhisperSTT({
+    language: 'en',              // Specify language to skip detection (faster)
+    silenceThreshold: 0.015,     // Sensitive silence detection
+    silenceDuration: 700,        // Send after 700ms silence (fast response)
+    maxRecordingDuration: 10000, // Max 10s chunks for faster processing
+    onTranscript: handleWhisperTranscript,
     onError: (error) => {
-      if (!error.includes('No speech detected')) {
-        toast.error(error);
-      }
+      toast.error(error);
     },
   });
+
+  // Check STT service status on mount
+  useEffect(() => {
+    const checkSTT = async () => {
+      try {
+        const status = await stt.status();
+        setSttReady(status.ready);
+        if (!status.ready) {
+          console.log('[Converse] STT not ready, initializing...');
+          // Try to initialize in background
+          stt.initialize().then(() => {
+            setSttReady(true);
+            toast.success('Voice transcription ready');
+          }).catch((err) => {
+            console.error('[Converse] STT init failed:', err);
+          });
+        }
+      } catch (err) {
+        console.error('[Converse] Failed to check STT status:', err);
+        setSttReady(false);
+      }
+    };
+    checkSTT();
+  }, []);
 
   // Update frequency data for user audio
   useEffect(() => {
@@ -430,32 +344,61 @@ export default function ConversePage() {
     }
   };
 
-  // Initialize chat
+  // Initialize chat - reuse empty voice chats or defer creation until first message
   useEffect(() => {
     const initializeChat = async () => {
+      // Prevent duplicate initialization
+      if (chatInitializedRef.current) return;
       if (personas.length === 0) return;
+      
+      chatInitializedRef.current = true;
       
       try {
         setIsLoading(true);
         const existingChats = await chatsApi.list(false, false);
-        const recentVoiceChat = existingChats.find((c: any) => 
+        
+        // First, look for any voice chat with messages from the last hour
+        const recentActiveVoiceChat = existingChats.find((c: any) => 
           c.title === 'Voice Conversation' && 
           c.is_owner &&
+          c.message_count > 0 &&
           new Date(c.updated_at).getTime() > Date.now() - 60 * 60 * 1000
         );
         
-        if (recentVoiceChat) {
-          setChat(recentVoiceChat as Chat);
-          if (selectedPersona && recentVoiceChat.persona_id !== selectedPersona.id) {
-            await chatsApi.update(recentVoiceChat.id, { persona_id: selectedPersona.id });
+        if (recentActiveVoiceChat) {
+          // Reuse recent active voice chat
+          setChat(recentActiveVoiceChat as Chat);
+          const currentPersona = selectedPersonaRef.current;
+          if (currentPersona && recentActiveVoiceChat.persona_id !== currentPersona.id) {
+            await chatsApi.update(recentActiveVoiceChat.id, { persona_id: currentPersona.id });
           }
         } else {
-          const newChat = await chatsApi.create({ 
-            title: 'Voice Conversation',
-            persona_id: selectedPersona?.id 
-          });
-          await chatsApi.update(newChat.id, { tts_enabled: true, voice_mode: true } as any);
-          setChat(newChat);
+          // Look for any empty voice chat to reuse (avoid creating duplicates)
+          const emptyVoiceChat = existingChats.find((c: any) => 
+            c.title === 'Voice Conversation' && 
+            c.is_owner &&
+            c.message_count === 0
+          );
+          
+          if (emptyVoiceChat) {
+            // Reuse the empty chat instead of creating a new one
+            setChat(emptyVoiceChat as Chat);
+            const currentPersona = selectedPersonaRef.current;
+            if (currentPersona && emptyVoiceChat.persona_id !== currentPersona.id) {
+              await chatsApi.update(emptyVoiceChat.id, { persona_id: currentPersona.id });
+            }
+          } else {
+            // No voice chat exists - create one
+            const currentPersona = selectedPersonaRef.current;
+            const newChat = await chatsApi.create({ 
+              title: 'Voice Conversation',
+              persona_id: currentPersona?.id 
+            });
+            await chatsApi.update(newChat.id, { tts_enabled: true, voice_mode: true } as any);
+            setChat(newChat);
+            // Don't refresh sidebar yet - wait until first message is sent
+            // This prevents empty voice chats from cluttering the list
+          }
         }
       } catch (err) {
         console.error('Failed to create chat:', err);
@@ -469,7 +412,6 @@ export default function ConversePage() {
     initializeChat();
     
     return () => {
-      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
       if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
       if (audioRef.current) audioRef.current.pause();
       if (ttsAnimationRef.current) cancelAnimationFrame(ttsAnimationRef.current);
@@ -477,35 +419,24 @@ export default function ConversePage() {
         ttsAudioContextRef.current?.close();
       }
     };
-  }, [personas, selectedPersona, router]);
+  }, [personas.length, router]); // Only depend on personas.length, not selectedPersona
 
   const handleMicToggleRef = useRef<() => void>(() => {});
 
-  const handleMicToggle = useCallback(() => {
+  const handleMicToggle = useCallback(async () => {
     resetUITimer();
     requestFullscreen(); // Try to enter fullscreen on first interaction
     
     if (isListening) {
       stopListening();
-      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-      const textToSend = accumulatedTextRef.current.trim();
-      if (textToSend && !isProcessingRef.current) {
-        accumulatedTextRef.current = '';
-        lastFinalTranscriptRef.current = '';
-        recentFinalWordsRef.current = [];
-        sendMessage(textToSend);
-      }
     } else {
       if (isSpeaking) stopAIAudio();
       resetTranscript();
-      accumulatedTextRef.current = '';
-      lastFinalTranscriptRef.current = '';
-      recentFinalWordsRef.current = [];
       setCaption('');
       setCaptionType('status');
-      startListening();
+      await startListening();
     }
-  }, [isListening, stopListening, sendMessage, isSpeaking, stopAIAudio, resetTranscript, startListening, resetUITimer, requestFullscreen]);
+  }, [isListening, stopListening, isSpeaking, stopAIAudio, resetTranscript, startListening, resetUITimer, requestFullscreen]);
 
   useEffect(() => {
     handleMicToggleRef.current = handleMicToggle;
@@ -652,6 +583,15 @@ export default function ConversePage() {
             <ArrowLeft className="w-5 h-5 text-gray-400" />
           </Link>
           <h1 className="font-medium text-white/90">Voice Mode</h1>
+          {/* STT Status indicator */}
+          {sttReady !== null && (
+            <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${
+              sttReady ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+            }`}>
+              <Cpu className="w-3 h-3" />
+              <span className="hidden sm:inline">{sttReady ? 'Whisper' : 'Loading...'}</span>
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-2">
@@ -783,12 +723,14 @@ export default function ConversePage() {
 
         {/* Status text */}
         <p className={`mt-8 text-xl font-light tracking-wide transition-colors z-10 ${
-          isListening ? 'text-cyan-400' 
+          isTranscribing ? 'text-yellow-400'
+          : isListening ? 'text-cyan-400' 
           : isSpeaking ? 'text-purple-400' 
           : isProcessing ? 'text-purple-300'
           : 'text-gray-400'
         }`}>
-          {isListening ? "I'm listening..." 
+          {isTranscribing ? 'Transcribing...'
+           : isListening ? "I'm listening..." 
            : isSpeaking ? 'Speaking...' 
            : isProcessing ? 'Thinking...' 
            : 'Tap to speak'}
@@ -829,7 +771,7 @@ export default function ConversePage() {
         }`}>
           <div className="max-w-lg mx-auto flex items-center gap-3 bg-white/5 backdrop-blur-sm rounded-full px-4 py-3 border border-white/10">
             <div className="flex-1 text-gray-500 text-sm">
-              {isListening ? 'Listening...' : 'Press space or tap circle to speak'}
+              {isTranscribing ? 'Transcribing...' : isListening ? 'Listening...' : 'Press space or tap circle to speak'}
             </div>
             <button
               onClick={(e) => { e.stopPropagation(); handleMicToggle(); }}

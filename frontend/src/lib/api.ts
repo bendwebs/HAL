@@ -584,4 +584,73 @@ export const youtube = {
     }),
 };
 
+// STT API (faster-whisper speech-to-text)
+export const stt = {
+  /**
+   * Get STT service status
+   */
+  status: () => request<{
+    initialized: boolean;
+    model_size: string;
+    device: string;
+    compute_type: string;
+    ready: boolean;
+    error?: string;
+  }>('/api/stt/status'),
+  
+  /**
+   * Initialize the STT model (useful if it failed at startup)
+   */
+  initialize: () => request<{
+    status: string;
+    model: string;
+    device: string;
+  }>('/api/stt/initialize', { method: 'POST' }),
+  
+  /**
+   * Transcribe audio to text
+   * @param audioBlob - Audio blob (WebM, WAV, MP3, etc.)
+   * @param language - Optional language code (e.g., 'en', 'es') for faster processing
+   * @returns Transcribed text and metadata
+   */
+  transcribe: async (
+    audioBlob: Blob,
+    language?: string
+  ): Promise<{
+    text: string;
+    metadata: {
+      language: string;
+      language_probability: number;
+      duration: number;
+      transcribe_time: number;
+      device: string;
+      model: string;
+    };
+  }> => {
+    const token = getToken();
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+    
+    const url = new URL(`${API_URL}/api/stt/transcribe`);
+    if (language) {
+      url.searchParams.set('language', language);
+    }
+    
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Transcription failed' }));
+      throw new ApiError(response.status, error.detail || 'Transcription failed');
+    }
+    
+    return response.json();
+  },
+};
+
 export { ApiError };
