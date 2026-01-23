@@ -189,8 +189,12 @@ async def send_message(
                 # Send final message with ID
                 yield f"data: {json.dumps({'type': 'saved', 'data': {'message_id': str(result.inserted_id)}})}\n\n"
                 
-                # Auto-generate title if this is the first exchange (title is still "New Chat")
-                if chat.get("title", "").strip().lower() in ["new chat", ""]:
+                # Auto-generate title if this is the first exchange
+                # Applies to "New Chat" and "Voice Conversation" titles
+                current_title = chat.get("title", "").strip().lower()
+                needs_title = current_title in ["new chat", "voice conversation", ""]
+                
+                if needs_title:
                     message_count = await database.messages.count_documents({"chat_id": ObjectId(chat_id)})
                     if message_count >= 2:  # At least user message + assistant response
                         try:
