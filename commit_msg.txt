@@ -1,24 +1,6 @@
-Add YouTube video search and embed functionality
+Auto-generate titles for voice conversations
 
-Backend:
-- Add YouTubeService with YouTube Data API v3 integration
-- Add youtube_search tool to agent system with auto-retry logic
-- Pass full structured result for YouTube actions (not just text)
-- Add confidence scoring for video search results
-- Add youtube router for recording user selections
-
-Frontend:
-- Add YouTubeResults component with embedded video player
-- Add VideoPlayer floating/draggable component for pop-out playback
-- Add ToolToggle component for per-chat tool settings
-- Update ChatMessage to render YouTube results inline
-- Hide text response when YouTube embed is displayed
-- Add play command parsing (play 1, play first, etc.)
-- Restore YouTube results from message history on page load
-- Fix api import in YouTubeResults component
-
-Features:
-- Videos embed directly in chat with thumbnail selection
-- Click to play inline or pop out to floating player
-- Confidence-based auto-play for high-match results
-- Selection tracking for training data collection
+- Extend auto-title generation to include "Voice Conversation" chats
+- Previously only "New Chat" titles were auto-generated
+- Title is generated after first message exchange using the LLM
+- Frontend already handles title_updated events, no changes needed

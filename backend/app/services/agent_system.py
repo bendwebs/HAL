@@ -336,8 +336,12 @@ class AgentSystem:
         if enabled_tools is None:
             enabled_tools = ["web_search", "youtube_search", "document_search", "memory_recall", "memory_store", "calculator"]
         
-        # Get system prompt with tool availability info
-        system_prompt = await self._get_system_prompt(persona_id, user_id, enabled_tools)
+        # Get system prompt with tool availability info and memory context for voice mode
+        system_prompt = await self._get_system_prompt(
+            persona_id, user_id, enabled_tools, 
+            voice_mode=voice_mode, 
+            user_message=message
+        )
         
         if voice_mode:
             system_prompt += "\n\nYou are in voice mode. Keep responses concise. No asterisks or markdown."
@@ -648,14 +652,23 @@ class AgentSystem:
         
         return result
 
-    async def _get_system_prompt(self, persona_id: Optional[str], user_id: str, enabled_tools: Optional[List[str]] = None) -> str:
-        """Get system prompt from persona or default"""
+    async def _get_system_prompt(self, persona_id: Optional[str], user_id: str, enabled_tools: Optional[List[str]] = None, voice_mode: bool = False, user_message: str = "") -> str:
+        """Get system prompt from persona or default, with optional memory injection for voice mode"""
+        
+        # For voice mode, automatically fetch relevant memories to inject
+        memory_context = ""
+        if voice_mode and user_message:
+            memory_context = await self._get_relevant_memories_for_context(user_id, user_message)
+        
         if persona_id:
             persona = await database.personas.find_one({"_id": ObjectId(persona_id)})
             if persona:
                 base_prompt = persona["system_prompt"]
                 # Add tool availability info to persona prompt
-                return self._add_tool_availability_info(base_prompt, enabled_tools)
+                prompt = self._add_tool_availability_info(base_prompt, enabled_tools)
+                if memory_context:
+                    prompt = self._inject_memory_context(prompt, memory_context)
+                return prompt
         
         # Build the default system prompt with tool availability
         all_tools = {
@@ -685,6 +698,10 @@ class AgentSystem:
         prompt = """You are HAL, a friendly AI assistant running locally.
 
 """
+        
+        # Inject memory context for personalization (especially important in voice mode)
+        if memory_context:
+            prompt = self._inject_memory_context(prompt, memory_context)
         
         # CURRENT TOOL STATUS - emphasize this is the current state
         prompt += "=== CURRENT TOOL STATUS (this overrides any previous statements in chat history) ===\n"
@@ -725,6 +742,74 @@ class AgentSystem:
 - If tools are available, USE THEM instead of saying you can't access information"""
         
         return prompt
+    
+    async def _get_relevant_memories_for_context(self, user_id: str, message: str) -> str:
+        """Fetch relevant memories to inject into context for personalized responses.
+        
+        This is especially useful in voice mode where we want the AI to naturally
+        use what it knows about the user without requiring explicit tool calls.
+        """
+        try:
+            memory_system = get_memory_system()
+            if not memory_system.is_available:
+                return ""
+            
+            # Get core user memories (name, preferences, key facts)
+            # These should always be included for personalization
+            all_memories = await memory_system.get_all_memories(user_id, limit=20)
+            
+            # Also search for memories relevant to the current message
+            relevant_memories = await memory_system.search_memories(user_id, message, limit=5)
+            
+            # Combine and deduplicate
+            memory_ids_seen = set()
+            combined_memories = []
+            
+            # Add relevant memories first (most important)
+            for mem in relevant_memories:
+                if mem["id"] not in memory_ids_seen and mem.get("score", 0) > 0.5:
+                    memory_ids_seen.add(mem["id"])
+                    combined_memories.append(mem["content"])
+            
+            # Add core memories (name, location, job, etc.) - filter for important ones
+            important_keywords = ["name is", "lives in", "works", "job", "profession", "likes", "prefers", "favorite", "always", "never"]
+            for mem in all_memories:
+                if mem["id"] not in memory_ids_seen:
+                    content_lower = mem["content"].lower()
+                    if any(kw in content_lower for kw in important_keywords):
+                        memory_ids_seen.add(mem["id"])
+                        combined_memories.append(mem["content"])
+            
+            if not combined_memories:
+                return ""
+            
+            # Limit to avoid context overflow
+            combined_memories = combined_memories[:10]
+            
+            return "\n".join([f"- {m}" for m in combined_memories])
+            
+        except Exception as e:
+            logger.error(f"Error fetching memories for context: {e}")
+            return ""
+    
+    def _inject_memory_context(self, prompt: str, memory_context: str) -> str:
+        """Inject memory context into the system prompt."""
+        memory_section = f"""=== WHAT YOU KNOW ABOUT THIS USER ===
+Use this information naturally in your responses. Don't explicitly say "I remember that..." - just use the knowledge as if you naturally know it.
+
+{memory_context}
+
+=== END USER CONTEXT ===
+
+"""
+        # Insert at the beginning of the prompt, after any initial greeting
+        if prompt.startswith("You are"):
+            # Find the end of the first paragraph
+            first_newline = prompt.find("\n\n")
+            if first_newline > 0:
+                return prompt[:first_newline + 2] + memory_section + prompt[first_newline + 2:]
+        
+        return memory_section + prompt
     
     def _add_tool_availability_info(self, base_prompt: str, enabled_tools: Optional[List[str]] = None) -> str:
         """Add tool availability information to a persona prompt"""

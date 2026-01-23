@@ -213,6 +213,11 @@ Last Updated: 2025-01-22
 - Eliminated duplicate text issues in voice transcription
 - Added STT status indicator in voice mode header
 - New API endpoints: /api/stt/transcribe, /api/stt/status, /api/stt/initialize
+- Auto-generate titles for voice conversations (not just "Voice Conversation")
+- **Memory integration for voice mode**: Automatically injects relevant user memories into context
+  - Core facts (name, job, location, preferences) always included
+  - Relevant memories searched based on current message
+  - AI naturally uses knowledge without explicit tool calls
 
 ### 2025-01-22
 - Added Admin User Management page with full CRUD
