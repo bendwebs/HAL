@@ -58,6 +58,8 @@ export interface Chat {
   model_override: string | null;
   tts_enabled: boolean;
   tts_voice_id: string | null;
+  voice_mode: boolean;
+  enabled_tools: string[] | null;
   visibility: ChatVisibility;
   shared_with: SharedUser[];
   share_includes_history: boolean;

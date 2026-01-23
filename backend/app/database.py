@@ -116,6 +116,15 @@ class Database:
             IndexModel([("query", TEXT)]),
         ])
         
+        # YouTube searches collection (for training data)
+        await self.db.youtube_searches.create_indexes([
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("chat_id", ASCENDING)]),
+            IndexModel([("created_at", ASCENDING)]),
+            IndexModel([("auto_selected_video_id", ASCENDING)]),
+            IndexModel([("user_selected_video_id", ASCENDING)]),
+        ])
+        
         logger.info("Database indexes created")
     
     # ============== Collection Accessors ==============
@@ -163,6 +172,10 @@ class Database:
     @property
     def web_searches(self):
         return self.db.web_searches
+    
+    @property
+    def youtube_searches(self):
+        return self.db.youtube_searches
 
 
 # Global database instance

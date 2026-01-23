@@ -1,12 +1,12 @@
-"""Agent System - Core AI agent with sub-agent capabilities"""
+"""Agent System - Core AI agent with LLM tool calling"""
 
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from bson import ObjectId
 from datetime import datetime
 import uuid
 import json
-import re
 import logging
+import re
 
 from app.database import database
 from app.config import settings
@@ -16,216 +16,124 @@ from app.services.memory_system import get_memory_system
 from app.services.resource_monitor import get_resource_monitor
 from app.services.tool_executor import get_tool_executor
 from app.services.web_search import get_web_search_service
+from app.services.youtube_service import get_youtube_service
 
 logger = logging.getLogger(__name__)
 
 
-def should_web_search(message: str) -> tuple[bool, Optional[str], Optional[str]]:
-    """Determine if the message warrants a web search.
-    
-    Returns (should_search, search_query, target_site) tuple.
-    
-    IMPORTANT: This function should be CONSERVATIVE - only trigger web searches
-    when the user is clearly requesting external information, not for casual
-    conversation that happens to contain words like "recent" or "latest".
-    """
-    message_lower = message.lower().strip()
-    
-    # Skip very short messages
-    if len(message_lower) < 10:
-        return False, None, None
-    
-    # Skip conversational/personal statements - these are NOT search requests
-    skip_patterns = [
-        r'^(hi|hello|hey|howdy|greetings)',
-        r'^(yes|no|yea|yeah|yep|nope|sure|ok|okay)',
-        r'^(thanks|thank you|thx)',
-        r'(i think|i feel|i believe|in my opinion|imo)',
-        r'(i\'ve been|i have been|it\'s been|its been)',  # Personal observations
-        r'(i live|i work|i\'m from|i am from)',
-        r'^(that\'s|thats) (interesting|cool|nice|great|good)',
-    ]
-    
-    for pattern in skip_patterns:
-        if re.search(pattern, message_lower):
-            return False, None, None
-    
-    # Known sites that users might want to search on
-    known_sites = {
-        'bloomberg': 'bloomberg.com',
-        'reuters': 'reuters.com',
-        'cnn': 'cnn.com',
-        'bbc': 'bbc.com',
-        'wikipedia': 'wikipedia.org',
-        'reddit': 'reddit.com',
-        'youtube': 'youtube.com',
-        'github': 'github.com',
-        'yahoo finance': 'finance.yahoo.com',
-        'google': None,  # Generic search indicator
+# Tool definitions in Ollama format
+TOOL_DEFINITIONS = {
+    "web_search": {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web for current information, news, prices, or recent events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    "youtube_search": {
+        "type": "function",
+        "function": {
+            "name": "youtube_search",
+            "description": "Search YouTube for videos to play. Use when the user wants to watch, play, or find a video. Returns video results that can be embedded and played in the chat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The video search query - include video title, artist, topic, etc."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    "document_search": {
+        "type": "function",
+        "function": {
+            "name": "document_search",
+            "description": "Search through the user's uploaded documents for relevant information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to search for in documents"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    "memory_recall": {
+        "type": "function",
+        "function": {
+            "name": "memory_recall",
+            "description": "Search stored memories about the user - their preferences, personal info, past conversations.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to search for in memories"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    "memory_store": {
+        "type": "function",
+        "function": {
+            "name": "memory_store",
+            "description": "Store new information about the user for future reference - their name, preferences, important facts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The information to remember about the user"
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Category: personal, preferences, work, or general"
+                    }
+                },
+                "required": ["content"]
+            }
+        }
+    },
+    "calculator": {
+        "type": "function", 
+        "function": {
+            "name": "calculator",
+            "description": "Perform mathematical calculations.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "Math expression like '2+2', 'sqrt(16)', '15% of 200'"
+                    }
+                },
+                "required": ["expression"]
+            }
+        }
     }
-    
-    # EXPLICIT search requests - must start with action verb or be a clear question
-    # Pattern 1: "search/lookup/find/google X" at the START of the message
-    explicit_search = re.match(
-        r'^(?:please\s+)?(?:can you\s+)?(?:search|look\s*up|find|google)\s+(?:for\s+)?(?:the\s+)?(.+)',
-        message_lower
-    )
-    if explicit_search:
-        query = explicit_search.group(1).strip()
-        query = re.sub(r'\s*(please|thanks|now|for me)\.?$', '', query, flags=re.IGNORECASE)
-        if len(query) > 3:
-            return True, query, None
-    
-    # Pattern 2: "search X on [site]" or "find X on [site]"
-    site_search = re.match(
-        r'^(?:please\s+)?(?:can you\s+)?(?:search|look\s*up|find|check)\s+(.+?)\s+(?:on|from|at)\s+(\w+(?:\s+\w+)?)',
-        message_lower
-    )
-    if site_search:
-        query = site_search.group(1).strip()
-        site_hint = site_search.group(2).strip()
-        target_site = known_sites.get(site_hint)
-        if target_site:
-            return True, query, target_site
-        if '.' in site_hint:
-            return True, query, site_hint
-        return True, f"{query} {site_hint}", None
-    
-    # Pattern 3: Questions asking for current/latest information
-    # Must be a QUESTION (start with question word or end with ?)
-    is_question = message_lower.endswith('?') or re.match(
-        r'^(what|who|where|when|why|how|which|is|are|does|do|can|could|will|would)\b',
-        message_lower
-    )
-    
-    if is_question:
-        # Check if asking about current/latest/recent things
-        # Note: what(?:'?s| is| are) handles "what's", "whats", "what is", "what are"
-        current_info_patterns = [
-            r'(?:what(?:\'?s| is| are))\s+(?:the\s+)?(?:current|latest|recent|newest|today\'?s?)\s+(.+)',
-            r'(?:what(?:\'?s| is| are))\s+(.+?)\s+(?:right now|today|currently|at the moment)',
-            # "what's the price of X" - must come before the generic "X price" pattern
-            r'(?:what(?:\'?s| is| are))\s+(?:the\s+)?(?:price|cost|value|rate)\s+(?:of\s+)?(.+)',
-            # "what's the X price/cost" - more specific, less greedy
-            r'(?:what(?:\'?s| is| are))\s+(?:the\s+)?(\w+(?:\s+\w+)?)\s+(?:price|cost|value|rate|score|status)\b',
-            r'(?:who|what)\s+(?:is|are)\s+(?:the\s+)?(?:current|new|latest)\s+(.+)',
-            r'(?:how much)\s+(?:is|does|are)\s+(.+)',
-        ]
-        
-        for pattern in current_info_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                query = match.group(1).strip()
-                query = re.sub(r'\s*(please|thanks|\?)\.?$', '', query, flags=re.IGNORECASE)
-                if len(query) > 3:
-                    return True, query, None
-    
-    # Pattern 4: Explicit news requests
-    news_patterns = [
-        r'^(?:get|show|tell)\s+(?:me\s+)?(?:the\s+)?(?:latest|recent|today\'?s?)\s+news\s+(?:about|on|for)\s+(.+)',
-        r'^(?:get|show|tell)\s+(?:me\s+)?(?:the\s+)?(?:latest|recent|today\'?s?)\s+(.+?)\s+news$',  # "get latest AI news"
-        r'^(?:what\'?s?|any)\s+(?:the\s+)?(?:latest|recent|new)\s+news\s+(?:about|on|for)\s+(.+)',
-        r'^news\s+(?:about|on|for)\s+(.+)',
-    ]
-    
-    for pattern in news_patterns:
-        match = re.match(pattern, message_lower)
-        if match:
-            query = match.group(1).strip()
-            if len(query) >= 2:  # Allow short queries like "AI" since we append " news"
-                return True, f"{query} news", None
-    
-    return False, None, None
-
-
-def should_search_documents(message: str) -> bool:
-    """Determine if the message warrants a document search.
-    
-    Returns True for questions, requests for information, or specific topics.
-    Returns False for greetings, personal statements, or casual chat.
-    """
-    message_lower = message.lower().strip()
-    
-    # Skip search for very short messages (likely greetings)
-    if len(message_lower) < 15:
-        return False
-    
-    # Skip search for common greetings and personal statements
-    skip_patterns = [
-        r'^(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening))[\s,!.]*',
-        r'^(my name is|i\'m |i am |call me )',
-        r'^(thanks|thank you|thx)',
-        r'^(bye|goodbye|see you|later)',
-        r'^(how are you|what\'s up|sup)',
-        r'^(yes|no|ok|okay|sure|alright|got it|understood)[\s!.]*$',
-    ]
-    
-    for pattern in skip_patterns:
-        if re.match(pattern, message_lower):
-            return False
-    
-    # Search for questions or information requests
-    search_indicators = [
-        r'\?$',  # Ends with question mark
-        r'^(what|who|where|when|why|how|which|can you|could you|do you|does|did|is|are|was|were)',
-        r'(tell me|explain|describe|show me|find|search|look up|look for)',
-        r'(information|details|about|regarding|concerning)',
-        r'(document|file|report|article|paper)',
-    ]
-    
-    for pattern in search_indicators:
-        if re.search(pattern, message_lower):
-            return True
-    
-    # Default: search if message is substantial (likely a real question)
-    word_count = len(message_lower.split())
-    return word_count >= 5
-
-
-def should_search_memories(message: str) -> bool:
-    """Determine if the message warrants a memory search.
-    
-    Returns True for questions about the user, references to past conversations,
-    or topics that might benefit from personal context.
-    """
-    message_lower = message.lower().strip()
-    
-    # Skip for very short messages
-    if len(message_lower) < 10:
-        return False
-    
-    # Skip common greetings (but NOT personal introductions - we want to check memories for those)
-    skip_patterns = [
-        r'^(hi|hello|hey|howdy|greetings)[\s,!.]*$',
-        r'^(thanks|thank you|thx)',
-        r'^(bye|goodbye|see you)',
-        r'^(yes|no|ok|okay|sure|alright)[\s!.]*$',
-    ]
-    
-    for pattern in skip_patterns:
-        if re.match(pattern, message_lower):
-            return False
-    
-    # Always search memories for personal statements (to avoid re-learning known info)
-    personal_patterns = [
-        r'(my name is|i\'m |i am |call me )',
-        r'(i work|i live|i like|i prefer|i have|i want)',
-        r'(remember|forgot|mentioned|told you|said)',
-    ]
-    
-    for pattern in personal_patterns:
-        if re.search(pattern, message_lower):
-            return True
-    
-    # Search for questions or substantial messages
-    if '?' in message or len(message_lower.split()) >= 4:
-        return True
-    
-    return False
+}
 
 
 class AgentSystem:
-    """Main agent system with sub-agent support"""
+    """Main agent system with LLM tool calling support"""
     
     def __init__(self):
         self.model = settings.default_chat_model
@@ -233,7 +141,7 @@ class AgentSystem:
         self._warmed_up = False
     
     async def warmup(self) -> bool:
-        """Warm up the model by sending a quick ping - makes first real response faster"""
+        """Warm up the model"""
         if self._warmed_up:
             return True
         
@@ -248,9 +156,465 @@ class AgentSystem:
             self._warmed_up = True
             return True
         except Exception as e:
-            print(f"Warmup failed: {e}")
+            logger.error(f"Warmup failed: {e}")
             return False
     
+    def _get_tools_for_ollama(self, enabled_tool_names: List[str]) -> List[Dict[str, Any]]:
+        """Get tool definitions in Ollama format"""
+        tools = []
+        for name in enabled_tool_names:
+            if name in TOOL_DEFINITIONS:
+                tools.append(TOOL_DEFINITIONS[name])
+        return tools
+    
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        user_id: str,
+        chat_id: str
+    ) -> Dict[str, Any]:
+        """Execute a tool and return the result"""
+        tool_executor = get_tool_executor()
+        
+        try:
+            if tool_name == "web_search":
+                web_search = get_web_search_service()
+                if not web_search.is_available:
+                    return {"success": False, "error": "Web search not configured"}
+                
+                result = await web_search.search_and_save(
+                    user_id=user_id,
+                    query=parameters.get("query", ""),
+                    max_results=5
+                )
+                
+                if result.get("success"):
+                    formatted = f"Search results for: {parameters.get('query')}\n\n"
+                    if result.get("answer"):
+                        formatted += f"Summary: {result['answer']}\n\n"
+                    for i, r in enumerate(result.get("results", [])[:5]):
+                        formatted += f"{i+1}. {r.get('title', '')}\n"
+                        formatted += f"   {r.get('content', '')[:250]}...\n\n"
+                    
+                    await tool_executor.record_tool_usage("web_search")
+                    return {"success": True, "result": formatted, "count": result.get("result_count", 0)}
+                else:
+                    return {"success": False, "error": result.get("error", "Search failed")}
+            
+            elif tool_name == "document_search":
+                rag = get_rag_engine()
+                results = await rag.search(user_id, parameters.get("query", ""), limit=5)
+                
+                if results:
+                    formatted = "Found in documents:\n\n"
+                    for r in results:
+                        formatted += f"From '{r['document_name']}':\n{r['content'][:400]}...\n\n"
+                    
+                    await tool_executor.record_tool_usage("document_search")
+                    return {"success": True, "result": formatted, "count": len(results)}
+                else:
+                    return {"success": True, "result": "No relevant documents found.", "count": 0}
+            
+            elif tool_name == "memory_recall":
+                memory_system = get_memory_system()
+                if not memory_system.is_available:
+                    return {"success": False, "error": "Memory system not available"}
+                
+                results = await memory_system.search_memories(
+                    user_id, parameters.get("query", ""), limit=5
+                )
+                
+                if results:
+                    formatted = "Memories found:\n" + "\n".join([f"- {m['content']}" for m in results])
+                    await tool_executor.record_tool_usage("memory_recall")
+                    return {"success": True, "result": formatted, "count": len(results)}
+                else:
+                    return {"success": True, "result": "No relevant memories found.", "count": 0}
+            
+            elif tool_name == "memory_store":
+                memory_system = get_memory_system()
+                if not memory_system.is_available:
+                    return {"success": False, "error": "Memory system not available"}
+                
+                content = parameters.get("content", "")
+                category = parameters.get("category", "general")
+                
+                memory_id = await memory_system.add_memory(
+                    user_id=user_id,
+                    content=content,
+                    category=category,
+                    source_chat_id=chat_id
+                )
+                
+                await tool_executor.record_tool_usage("memory_store")
+                return {"success": True, "result": f"Stored: {content}", "memory_id": memory_id}
+            
+            elif tool_name == "calculator":
+                expression = parameters.get("expression", "")
+                try:
+                    import math
+                    # Handle percentage expressions
+                    expr = expression.lower()
+                    if "% of" in expr:
+                        match = re.match(r"(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)", expr)
+                        if match:
+                            pct, val = float(match.group(1)), float(match.group(2))
+                            result = (pct / 100) * val
+                            await tool_executor.record_tool_usage("calculator")
+                            return {"success": True, "result": f"{expression} = {result}"}
+                    
+                    allowed = {
+                        "abs": abs, "round": round, "min": min, "max": max,
+                        "pow": pow, "sqrt": math.sqrt, "sin": math.sin,
+                        "cos": math.cos, "tan": math.tan, "pi": math.pi,
+                        "e": math.e, "log": math.log, "log10": math.log10
+                    }
+                    result = eval(expression, {"__builtins__": {}}, allowed)
+                    await tool_executor.record_tool_usage("calculator")
+                    return {"success": True, "result": f"{expression} = {result}"}
+                except Exception as e:
+                    return {"success": False, "error": f"Calculation error: {str(e)}"}
+            
+            elif tool_name == "youtube_search":
+                youtube = get_youtube_service()
+                if not youtube.is_available:
+                    return {"success": False, "error": "YouTube API not configured. Add YOUTUBE_API_KEY to .env"}
+                
+                result = await youtube.search_and_score(
+                    user_id=user_id,
+                    query=parameters.get("query", ""),
+                    chat_id=chat_id,
+                    max_results=5
+                )
+                
+                logger.info(f"[YOUTUBE] Search result: success={result.get('success')}, videos={len(result.get('videos', []))}")
+                
+                if result.get("success"):
+                    await tool_executor.record_tool_usage("youtube_search")
+                    
+                    # Return structured data for frontend to render
+                    youtube_result = {
+                        "success": True,
+                        "type": "youtube_results",
+                        "action": result.get("action"),  # "play" or "select"
+                        "query": result.get("query"),
+                        "videos": result.get("videos", []),
+                        "selected_video": result.get("selected_video"),
+                        "top_confidence": result.get("top_confidence"),
+                        "search_id": result.get("search_id"),
+                        "message": result.get("message", "")
+                    }
+                    logger.info(f"[YOUTUBE] Returning structured result with {len(youtube_result.get('videos', []))} videos")
+                    return youtube_result
+                else:
+                    return {"success": False, "error": result.get("error", "YouTube search failed")}
+            
+            else:
+                return {"success": False, "error": f"Unknown tool: {tool_name}"}
+        
+        except Exception as e:
+            logger.error(f"Tool execution error for {tool_name}: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def generate_response_stream(
+        self,
+        chat_id: str,
+        user_id: str,
+        message: str,
+        document_ids: List[str] = None,
+        persona_id: Optional[str] = None,
+        model_override: Optional[str] = None,
+        voice_mode: bool = False,
+        enabled_tools: Optional[List[str]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Generate response with streaming and tool calling"""
+        model = model_override or self.model
+        ollama = get_ollama_client()
+        
+        # Default tools if not specified
+        if enabled_tools is None:
+            enabled_tools = ["web_search", "youtube_search", "document_search", "memory_recall", "memory_store", "calculator"]
+        
+        # Get system prompt with tool availability info
+        system_prompt = await self._get_system_prompt(persona_id, user_id, enabled_tools)
+        
+        if voice_mode:
+            system_prompt += "\n\nYou are in voice mode. Keep responses concise. No asterisks or markdown."
+        
+        # Get Ollama tool definitions
+        tools = self._get_tools_for_ollama(enabled_tools) if enabled_tools else None
+        
+        # Get chat history
+        history = await self._get_chat_history(chat_id, limit=10)
+        
+        # Build messages
+        messages = [{"role": m["role"], "content": m["content"]} for m in history]
+        
+        # Check if history contains responses about tools being disabled but they're now enabled
+        # If so, inject a context correction message
+        if enabled_tools and "web_search" in enabled_tools:
+            history_text = " ".join([m.get("content", "") for m in history if m.get("role") == "assistant"])
+            history_lower = history_text.lower()
+            
+            tool_disabled_phrases = [
+                "tools are currently disabled",
+                "tool has been disabled",
+                "has been disabled",
+                "is disabled",
+                "are disabled",
+                "web search capability is disabled", 
+                "don't have access to real-time",
+                "can't fetch the current price",
+                "can't check the current price",
+                "cannot check",
+                "tools needed to fetch",
+                "my available tools don't allow",
+                "unable to perform web searches",
+                "cannot search the web",
+                "ability to search for real-time data has been disabled",
+                "search for real-time data has been disabled",
+                "that tool has been disabled",
+                "unfortunately, that tool",
+                "i would need to use my web_search tool. unfortunately"
+            ]
+            
+            history_mentions_disabled = any(phrase in history_lower for phrase in tool_disabled_phrases)
+            
+            logger.info(f"[TOOL CHECK] enabled_tools={enabled_tools}, history_mentions_disabled={history_mentions_disabled}")
+            if history_mentions_disabled:
+                logger.info(f"[TOOL CHECK] Detected disabled tool mention in history, injecting correction")
+            
+            if history_mentions_disabled:
+                # Inject a system-style correction before the user's new message
+                tool_status_update = (
+                    "[SYSTEM UPDATE: Tool settings have changed. web_search is NOW ENABLED. "
+                    "You CAN and SHOULD use web_search for this request. "
+                    "Ignore any previous statements about tools being disabled.]"
+                )
+                messages.append({"role": "user", "content": tool_status_update})
+                messages.append({"role": "assistant", "content": "Understood. I now have access to web_search and will use it for relevant requests."})
+        
+        # Check if history shows successful tool usage but tools are now DISABLED
+        # This prevents the model from hallucinating data based on previous successful searches
+        if not enabled_tools or "web_search" not in enabled_tools:
+            history_text = " ".join([m.get("content", "") for m in history if m.get("role") == "assistant"])
+            history_lower = history_text.lower()
+            
+            # Phrases that indicate a successful web search was done previously
+            successful_search_phrases = [
+                "current price of",
+                "as of today",
+                "as of january",
+                "as of february", 
+                "as of march",
+                "stock is approximately",
+                "stock is around",
+                "price is approximately",
+                "price is around",
+                "according to",
+                "i found",
+                "search results show"
+            ]
+            
+            history_shows_search_results = any(phrase in history_lower for phrase in successful_search_phrases)
+            
+            if history_shows_search_results:
+                logger.info(f"[TOOL CHECK] History shows previous search results but web_search is now DISABLED, injecting correction")
+                # Inject a correction that tools are now disabled
+                tool_status_update = (
+                    "[SYSTEM UPDATE: Tool settings have changed. web_search is NOW DISABLED. "
+                    "You can NO LONGER access real-time data or search the web. "
+                    "Do NOT provide current prices or real-time data. "
+                    "If asked for current information, explain that web search has been disabled.]"
+                )
+                messages.append({"role": "user", "content": tool_status_update})
+                messages.append({"role": "assistant", "content": "Understood. Web search is now disabled. I cannot provide current prices or real-time information."})
+        
+        messages.append({"role": "user", "content": message})
+        
+        logger.info(f"[MESSAGES] Sending {len(messages)} messages to model, tools={[t['function']['name'] for t in (tools or [])]}")
+        
+        # Check if this looks like a video search request
+        message_lower = message.lower()
+        is_video_request = any(phrase in message_lower for phrase in [
+            'video', 'youtube', 'watch', 'show me', 'find me', 'play'
+        ]) and 'youtube_search' in (enabled_tools or [])
+        
+        # First call - with tools to see if model wants to use any
+        tool_calls_to_execute = []
+        first_response_content = ""
+        
+        logger.info(f"[OLLAMA CALL] model={model}, tools_count={len(tools) if tools else 0}, tools_passed={tools is not None}")
+        
+        # Non-streaming first call to check for tool usage
+        try:
+            first_response = await ollama.chat(
+                model=model,
+                messages=messages,
+                system=system_prompt,
+                tools=tools
+            )
+            
+            msg = first_response.get("message", {})
+            first_response_content = msg.get("content", "")
+            
+            logger.info(f"[OLLAMA RESPONSE] tool_calls={msg.get('tool_calls')}, content_preview={first_response_content[:100] if first_response_content else 'None'}...")
+            
+            if msg.get("tool_calls"):
+                tool_calls_to_execute = msg["tool_calls"]
+                logger.info(f"[TOOL CALLS] Model wants to call: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
+            
+            # If user asked for videos but model didn't call youtube_search, retry with a hint
+            elif is_video_request and not tool_calls_to_execute:
+                logger.info(f"[YOUTUBE RETRY] User asked for videos but model didn't call tool, retrying with hint")
+                
+                # Add a hint message and retry
+                retry_messages = messages.copy()
+                retry_messages.append({
+                    "role": "assistant", 
+                    "content": "I should use the youtube_search tool to find videos for you."
+                })
+                retry_messages.append({
+                    "role": "user",
+                    "content": "Yes, please use the youtube_search tool to search for videos."
+                })
+                
+                retry_response = await ollama.chat(
+                    model=model,
+                    messages=retry_messages,
+                    system=system_prompt,
+                    tools=tools
+                )
+                
+                retry_msg = retry_response.get("message", {})
+                if retry_msg.get("tool_calls"):
+                    tool_calls_to_execute = retry_msg["tool_calls"]
+                    first_response_content = retry_msg.get("content", "")
+                    logger.info(f"[YOUTUBE RETRY] Success! Tool calls: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
+        except Exception as e:
+            logger.error(f"First LLM call failed: {e}")
+            yield {"type": "error", "data": {"message": str(e)}}
+            return
+        
+        # Execute any tool calls
+        tool_results = []
+        for tool_call in tool_calls_to_execute:
+            func = tool_call.get("function", {})
+            tool_name = func.get("name", "")
+            
+            try:
+                args = func.get("arguments", {})
+                if isinstance(args, str):
+                    args = json.loads(args)
+            except:
+                args = {}
+            
+            action_id = str(uuid.uuid4())
+            
+            # Notify start
+            yield {
+                "type": "action_start",
+                "data": {
+                    "id": action_id,
+                    "type": "tool_call",
+                    "name": tool_name,
+                    "parameters": args,
+                    "status": "running"
+                }
+            }
+            
+            start_time = datetime.utcnow()
+            result = await self._execute_tool(tool_name, args, user_id, chat_id)
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            
+            tool_results.append({
+                "tool_call": tool_call,
+                "result": result
+            })
+            
+            # Notify completion
+            status = "complete" if result.get("success") else "failed"
+            
+            # For structured results (like youtube_results), pass the entire result object
+            # For simple results, extract just the result/error string
+            if result.get("type") == "youtube_results":
+                result_data = result  # Pass full structured data for YouTube
+                logger.info(f"[YOUTUBE] Yielding action_complete with full result data, videos={len(result.get('videos', []))}")
+            else:
+                result_data = result.get("result") or result.get("error")
+            
+            yield {
+                "type": "action_complete",
+                "data": {
+                    "id": action_id,
+                    "type": "tool_call",
+                    "name": tool_name,
+                    "parameters": args,
+                    "status": status,
+                    "result": result_data,
+                    "duration_ms": duration_ms
+                }
+            }
+        
+        # If tools were called, make a second call with results
+        if tool_results:
+            # Add assistant message with tool calls
+            messages.append({
+                "role": "assistant",
+                "content": first_response_content or "",
+                "tool_calls": tool_calls_to_execute
+            })
+            
+            # Add tool results
+            for tr in tool_results:
+                messages.append({
+                    "role": "tool",
+                    "content": json.dumps(tr["result"])
+                })
+            
+            # Final streaming response
+            try:
+                async for chunk in ollama.chat_stream(
+                    model=model,
+                    messages=messages,
+                    system=system_prompt
+                ):
+                    if chunk.get("message", {}).get("content"):
+                        delta = chunk["message"]["content"]
+                        yield {"type": "content", "data": {"delta": delta}}
+                    
+                    if chunk.get("done"):
+                        yield {
+                            "type": "done",
+                            "data": {
+                                "model": model,
+                                "token_usage": {
+                                    "prompt": chunk.get("prompt_eval_count", 0),
+                                    "completion": chunk.get("eval_count", 0),
+                                    "total": chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0)
+                                }
+                            }
+                        }
+            except Exception as e:
+                yield {"type": "error", "data": {"message": str(e)}}
+        
+        else:
+            # No tool calls - stream the first response content
+            if first_response_content:
+                # Send content in chunks to simulate streaming
+                chunk_size = 10
+                for i in range(0, len(first_response_content), chunk_size):
+                    yield {"type": "content", "data": {"delta": first_response_content[i:i+chunk_size]}}
+            
+            yield {
+                "type": "done",
+                "data": {
+                    "model": model,
+                    "token_usage": {"prompt": 0, "completion": 0, "total": 0}
+                }
+            }
+
     async def generate_response(
         self,
         chat_id: str,
@@ -260,6 +624,7 @@ class AgentSystem:
         persona_id: Optional[str] = None,
         model_override: Optional[str] = None,
         voice_mode: bool = False,
+        enabled_tools: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Generate a complete response (non-streaming)"""
         result = {
@@ -271,11 +636,10 @@ class AgentSystem:
         }
         
         async for chunk in self.generate_response_stream(
-            chat_id, user_id, message, document_ids, persona_id, model_override, voice_mode
+            chat_id, user_id, message, document_ids,
+            persona_id, model_override, voice_mode, enabled_tools
         ):
-            if chunk["type"] == "thinking":
-                result["thinking"] = chunk["data"].get("content", "")
-            elif chunk["type"] == "content":
+            if chunk["type"] == "content":
                 result["content"] += chunk["data"].get("delta", "")
             elif chunk["type"] == "action_complete":
                 result["actions"].append(chunk["data"])
@@ -284,299 +648,106 @@ class AgentSystem:
         
         return result
 
-    async def generate_response_stream(
-        self,
-        chat_id: str,
-        user_id: str,
-        message: str,
-        document_ids: List[str] = None,
-        persona_id: Optional[str] = None,
-        model_override: Optional[str] = None,
-        voice_mode: bool = False,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Generate response with streaming"""
-        model = model_override or self.model
-        ollama = get_ollama_client()
-        
-        # Get system prompt from persona
-        system_prompt = await self._get_system_prompt(persona_id, user_id)
-        
-        # Add voice mode enhancements for more conversational responses
-        if voice_mode:
-            system_prompt += """
-
-You are in a voice conversation. Keep these guidelines in mind:
-- Be conversational and engaging - ask follow-up questions to keep the dialogue flowing
-- Keep responses concise (1-3 sentences unless explaining something complex)
-- Show genuine curiosity about what the user shares
-- Don't just answer questions - also share relevant thoughts, ask about their experience, or offer interesting related information
-- Use natural conversational fillers occasionally like "That's interesting..." or "You know what..."
-- If the user gives a short response, ask a thoughtful follow-up question
-- Vary your response patterns - don't always start with "That's great!" or similar
-- Remember context from earlier in the conversation and reference it naturally
-- IMPORTANT: Do NOT use asterisks (*) in your responses - no *emphasis*, *actions*, or *emotes*. Speak naturally as if talking aloud."""
-        
-        # Build context
-        context_parts = []
-        
-        # Check if user wants a web search
-        should_search, search_query, target_site = should_web_search(message)
-        
-        if should_search and search_query:
-            web_search = get_web_search_service()
-            
-            if web_search.is_available:
-                # Notify that we're searching
-                yield {
-                    "type": "action_start",
-                    "data": {
-                        "id": str(uuid.uuid4()),
-                        "type": "web_search",
-                        "name": "web_search",
-                        "parameters": {"query": search_query, "site": target_site},
-                        "status": "running"
-                    }
-                }
-                
-                start_time = datetime.utcnow()
-                
-                # Perform search and save results to MongoDB
-                web_result = await web_search.search_and_save(
-                    user_id=user_id,
-                    query=search_query,
-                    target_site=target_site,
-                    max_results=5
-                )
-                
-                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-                
-                if web_result.get("success"):
-                    # Build context from web results
-                    web_context = f"Web search for: {search_query}\n"
-                    
-                    # Add Tavily's answer if available
-                    if web_result.get("answer"):
-                        web_context += f"\nSummary: {web_result['answer']}\n"
-                    
-                    # Add search result snippets
-                    if web_result.get("results"):
-                        web_context += "\nSearch results:\n"
-                        for i, r in enumerate(web_result["results"]):
-                            web_context += f"{i+1}. {r.get('title', '')} ({r.get('url', '')})\n"
-                            web_context += f"   {r.get('content', '')[:500]}\n\n"
-                    
-                    context_parts.append(web_context)
-                    
-                    result_desc = f"Found {web_result.get('result_count', 0)} results"
-                    if web_result.get("answer"):
-                        result_desc = f"Got answer + {web_result.get('result_count', 0)} results"
-                    
-                    # Track tool usage
-                    tool_executor = get_tool_executor()
-                    await tool_executor.record_tool_usage("web_search")
-                    
-                    yield {
-                        "type": "action_complete",
-                        "data": {
-                            "id": str(uuid.uuid4()),
-                            "type": "web_search",
-                            "name": "web_search",
-                            "parameters": {"query": search_query, "site": target_site},
-                            "status": "complete",
-                            "result": result_desc,
-                            "search_id": web_result.get("search_id"),  # Include for later extraction
-                            "duration_ms": duration_ms
-                        }
-                    }
-                else:
-                    yield {
-                        "type": "action_complete",
-                        "data": {
-                            "id": str(uuid.uuid4()),
-                            "type": "web_search",
-                            "name": "web_search",
-                            "parameters": {"query": search_query, "site": target_site},
-                            "status": "error",
-                            "result": web_result.get("error", "Search failed"),
-                            "duration_ms": duration_ms
-                        }
-                    }
-        
-        # Retrieve relevant memories using Mem0 (only if appropriate)
-        memory_system = get_memory_system()
-        memories = []
-        
-        if memory_system.is_available and should_search_memories(message):
-            memories = await memory_system.search_memories(user_id, message, limit=5)
-        
-        if memories:
-            memory_text = "\n".join([f"- {m['content']}" for m in memories])
-            context_parts.append(f"Relevant memories about this user:\n{memory_text}")
-            
-            # Track tool usage
-            tool_executor = get_tool_executor()
-            await tool_executor.record_tool_usage("memory_recall")
-            
-            # Send memory usage details to frontend
-            yield {
-                "type": "memories_used",
-                "data": {
-                    "memories": [
-                        {
-                            "id": m["id"],
-                            "content": m["content"],
-                            "score": m.get("score", 0),
-                            "categories": m.get("categories", [])
-                        }
-                        for m in memories
-                    ]
-                }
-            }
-            
-            yield {
-                "type": "action_complete",
-                "data": {
-                    "id": str(uuid.uuid4()),
-                    "type": "memory_recall",
-                    "name": "recall_memories",
-                    "parameters": {"query": message[:100]},
-                    "status": "complete",
-                    "result": f"Found {len(memories)} relevant memories",
-                    "duration_ms": 50
-                }
-            }
-        
-        # SMART LIBRARY SEARCH - only search when the message warrants it
-        # If specific document_ids provided, always search those; otherwise check if search is appropriate
-        rag = get_rag_engine()
-        doc_results = []
-        
-        if document_ids or should_search_documents(message):
-            doc_results = await rag.search(user_id, message, document_ids, limit=5)
-        
-        if doc_results:
-            doc_text = "\n\n".join([
-                f"From '{r['document_name']}' (relevance: {r['score']:.2f}):\n{r['content']}"
-                for r in doc_results
-            ])
-            context_parts.append(f"Relevant excerpts from your documents:\n{doc_text}")
-            
-            # Track tool usage
-            tool_executor = get_tool_executor()
-            await tool_executor.record_tool_usage("document_search")
-            
-            # List which documents were searched
-            doc_names = list(set(r['document_name'] for r in doc_results))
-            yield {
-                "type": "action_complete",
-                "data": {
-                    "id": str(uuid.uuid4()),
-                    "type": "rag_search",
-                    "name": "search_library",
-                    "parameters": {"query": message[:100]},
-                    "status": "complete",
-                    "result": f"Found {len(doc_results)} relevant excerpts from: {', '.join(doc_names)}",
-                    "duration_ms": 100
-                }
-            }
-
-        # Get chat history
-        history = await self._get_chat_history(chat_id, limit=10)
-        
-        # Build messages
-        messages = []
-        
-        # Add context to system prompt
-        if context_parts:
-            context = "\n\n".join(context_parts)
-            system_prompt = f"{system_prompt}\n\nContext:\n{context}"
-        
-        # Add history
-        for msg in history:
-            messages.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
-        
-        # Add current message
-        messages.append({"role": "user", "content": message})
-        
-        # Generate response
-        start_time = datetime.utcnow()
-        full_response = ""
-        token_usage = {"prompt": 0, "completion": 0, "total": 0}
-        
-        try:
-            async for chunk in ollama.chat_stream(
-                model=model,
-                messages=messages,
-                system=system_prompt
-            ):
-                if chunk.get("message", {}).get("content"):
-                    delta = chunk["message"]["content"]
-                    full_response += delta
-                    yield {"type": "content", "data": {"delta": delta}}
-                
-                if chunk.get("done"):
-                    token_usage = {
-                        "prompt": chunk.get("prompt_eval_count", 0),
-                        "completion": chunk.get("eval_count", 0),
-                        "total": chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0)
-                    }
-        
-        except Exception as e:
-            yield {"type": "error", "data": {"message": str(e)}}
-            return
-        
-        # Record latency
-        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-        monitor = get_resource_monitor()
-        monitor.record_latency(duration_ms)
-        
-        yield {
-            "type": "done",
-            "data": {
-                "model": model,
-                "token_usage": token_usage,
-                "duration_ms": duration_ms
-            }
-        }
-
-    async def _get_system_prompt(self, persona_id: Optional[str], user_id: str) -> str:
+    async def _get_system_prompt(self, persona_id: Optional[str], user_id: str, enabled_tools: Optional[List[str]] = None) -> str:
         """Get system prompt from persona or default"""
         if persona_id:
             persona = await database.personas.find_one({"_id": ObjectId(persona_id)})
             if persona:
-                return persona["system_prompt"]
+                base_prompt = persona["system_prompt"]
+                # Add tool availability info to persona prompt
+                return self._add_tool_availability_info(base_prompt, enabled_tools)
         
-        return """You are HAL, a friendly AI assistant running locally on the user's computer. You have access to their personal documents, memories from past conversations, and can search the web when needed.
+        # Build the default system prompt with tool availability
+        all_tools = {
+            "web_search": "For current events, news, prices, recent information",
+            "youtube_search": "To search and play YouTube videos - use when user wants to watch, play, or find videos",
+            "document_search": "To find info in user's uploaded documents",
+            "memory_recall": "To remember things about this user",
+            "memory_store": "To save important info about the user (name, preferences, etc)",
+            "calculator": "For math calculations"
+        }
+        
+        if enabled_tools is None:
+            enabled_tools = list(all_tools.keys())
+        
+        enabled_tools_set = set(enabled_tools) if enabled_tools else set()
+        
+        # Build tool descriptions
+        enabled_list = []
+        disabled_list = []
+        
+        for tool_name, description in all_tools.items():
+            if tool_name in enabled_tools_set:
+                enabled_list.append(f"- {tool_name}: {description}")
+            else:
+                disabled_list.append(tool_name.replace("_", " "))
+        
+        prompt = """You are HAL, a friendly AI assistant running locally.
 
-IMPORTANT - Response Style:
-- Write like you're having a natural conversation with a friend, not writing a document
-- NEVER use markdown formatting (no **, no ##, no bullet points, no numbered lists)
-- Instead of lists, weave information naturally into sentences and paragraphs
-- Keep responses conversational and flowing, like you're talking out loud
-- Use casual transitions like "So basically...", "The thing is...", "What's interesting is..."
-- It's okay to use contractions (don't, won't, it's, that's)
-- Vary your sentence length - mix short punchy sentences with longer explanatory ones
-- If you need to mention multiple things, work them into the conversation naturally rather than listing them
+"""
+        
+        # CURRENT TOOL STATUS - emphasize this is the current state
+        prompt += "=== CURRENT TOOL STATUS (this overrides any previous statements in chat history) ===\n"
+        
+        if enabled_list:
+            prompt += "ENABLED TOOLS - You CAN and SHOULD use these tools when relevant:\n"
+            prompt += "\n".join(enabled_list)
+            prompt += "\n\n"
+            prompt += """CRITICAL RULES FOR TOOL USAGE:
+1. For ANY question about current/real-time data (stock prices, news, weather, sports scores, current events), you MUST use web_search. DO NOT answer from memory.
+2. Stock prices change constantly - NEVER guess or use old data. ALWAYS search.
+3. If you're unsure whether information is current, USE THE TOOL.
+4. Do not say "as of today" or give specific prices unless you just performed a web_search.
+5. NEVER fabricate or hallucinate data - if you didn't search, you don't know the current value.
 
-Examples of what NOT to do:
-- "Here are the key points: 1. First thing 2. Second thing"
-- "**Important:** This is crucial"
-- "## Summary"
-
-Examples of good conversational style:
-- "So there are a few things going on here. First off, the main issue seems to be... and then there's also the fact that..."
-- "That's a great question! Basically what happens is..."
-- "I remember you mentioned something about this before - you were working on..."
-
-Your capabilities:
-- You can pull up relevant info from documents the user has uploaded
-- You remember things about the user from previous chats
-- You can search the web when they ask for current information
-
-Be warm, helpful, and genuine. If you don't know something, just say so naturally - no need to be formal about it."""
+"""
+        
+        if disabled_list:
+            prompt += f"DISABLED TOOLS - These are currently unavailable: {', '.join(disabled_list)}.\n"
+            prompt += "Only mention tool limitations if the user asks for something requiring a DISABLED tool.\n\n"
+        
+        if not enabled_list:
+            prompt += "NOTE: All tools are currently disabled. You can only respond based on your training knowledge. "
+            prompt += "If the user asks for real-time information, current prices, or other data that would require tools, "
+            prompt += "explain that you cannot access that information because the required tools are disabled.\n\n"
+        
+        prompt += "=== END TOOL STATUS ===\n\n"
+        
+        if "memory_store" in enabled_tools_set:
+            prompt += "When the user tells you personal information (their name, preferences, where they live, etc), use memory_store to save it!\n\n"
+        
+        prompt += """Response style:
+- Be conversational and friendly
+- Avoid markdown formatting (no **, ##, bullets)
+- Use natural flowing sentences
+- NEVER claim to perform an action you haven't actually done
+- NEVER make up or fabricate prices, statistics, or current data - ALWAYS use web_search first
+- If tools are available, USE THEM instead of saying you can't access information"""
+        
+        return prompt
+    
+    def _add_tool_availability_info(self, base_prompt: str, enabled_tools: Optional[List[str]] = None) -> str:
+        """Add tool availability information to a persona prompt"""
+        all_tools = ["web_search", "youtube_search", "document_search", "memory_recall", "memory_store", "calculator"]
+        
+        if enabled_tools is None:
+            enabled_tools = all_tools
+        
+        enabled_tools_set = set(enabled_tools) if enabled_tools else set()
+        disabled_tools = [t.replace("_", " ") for t in all_tools if t not in enabled_tools_set]
+        enabled_tools_names = [t.replace("_", " ") for t in all_tools if t in enabled_tools_set]
+        
+        prompt_addition = "\n\n=== CURRENT TOOL STATUS (overrides any previous statements) ===\n"
+        
+        if enabled_tools_names:
+            prompt_addition += f"ENABLED: {', '.join(enabled_tools_names)}. USE these tools when relevant!\n"
+        
+        if disabled_tools:
+            prompt_addition += f"DISABLED: {', '.join(disabled_tools)}.\n"
+        
+        prompt_addition += "=== END TOOL STATUS ===\n"
+        
+        return base_prompt + prompt_addition
     
     async def _get_chat_history(self, chat_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent chat history"""
@@ -585,11 +756,7 @@ Be warm, helpful, and genuine. If you don't know something, just say so naturall
         ).sort("created_at", -1).limit(limit).to_list(limit)
         
         messages.reverse()
-        
-        return [
-            {"role": m["role"], "content": m["content"]}
-            for m in messages
-        ]
+        return [{"role": m["role"], "content": m["content"]} for m in messages]
 
 
 # Singleton

@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # Web Search (Tavily)
     tavily_api_key: Optional[str] = None
     
+    # YouTube API
+    youtube_api_key: Optional[str] = None
+    
     # Server
     api_prefix: str = "/api"
     debug: bool = True

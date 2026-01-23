@@ -126,9 +126,23 @@ class PiperTTSService:
         
         # Extract speaker name and quality from voice_name
         # Format: en_XX-speaker-quality -> speaker/quality/en_XX-speaker-quality
-        parts = voice_name.replace(f"{locale}-", "").rsplit("-", 1)
-        speaker = parts[0]
-        quality = parts[1] if len(parts) > 1 else "medium"
+        # The speaker name can contain underscores (e.g., southern_english_male)
+        # So we need to find the quality suffix which is always: low, medium, or high
+        name_without_locale = voice_name.replace(f"{locale}-", "")
+        
+        # Find the quality suffix
+        if name_without_locale.endswith("-low"):
+            speaker = name_without_locale[:-4]  # Remove "-low"
+            quality = "low"
+        elif name_without_locale.endswith("-medium"):
+            speaker = name_without_locale[:-7]  # Remove "-medium"
+            quality = "medium"
+        elif name_without_locale.endswith("-high"):
+            speaker = name_without_locale[:-5]  # Remove "-high"
+            quality = "high"
+        else:
+            speaker = name_without_locale
+            quality = "medium"
         
         base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{locale_path}/{speaker}/{quality}"
         
@@ -139,6 +153,7 @@ class PiperTTSService:
         config_file = os.path.join(PIPER_MODELS_PATH, f"{voice_name}.onnx.json")
         
         print(f"[Piper TTS] Downloading voice model: {voice_name}...")
+        print(f"[Piper TTS] URL: {model_url}")
         
         try:
             urllib.request.urlretrieve(model_url, model_file)

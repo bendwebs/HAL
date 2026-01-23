@@ -36,6 +36,7 @@ aiofiles==23.2.1
 
 # Resource monitoring
 psutil==5.9.7
+GPUtil==1.4.0
 
 # Memory system (Mem0 with ChromaDB vector store)
 mem0ai>=1.0.0

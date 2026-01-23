@@ -1,3 +1,23 @@
-Make HTTPS the default mode for start.bat
+Add voice management admin and fix caption deduplication
 
-HTTPS is required for mobile voice (microphone access needs secure context)
+Features:
+- Add /admin/voices page for managing TTS voices
+- Admin can enable/disable voices for /converse page
+- Voices grouped by quality (High, Medium, Low, Coming Soon)
+- Coming Soon section for future premium voices (ElevenLabs, OpenAI)
+- Voice selection persisted to localStorage
+
+Fixes:
+- Improved speech recognition deduplication
+- Added asterisk restriction to Voice Assistant system prompt
+- Fixed database collection name (system_config instead of settings)
+
+Backend:
+- New voice_settings router with CRUD endpoints
+- Voice settings stored in system_config collection
+- Migration script for updating existing Voice Assistant persona
+
+Frontend:
+- Updated converse page to fetch admin-enabled voices
+- Added voiceSettings API client
+- Admin quick action button for voice management

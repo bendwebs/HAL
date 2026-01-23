@@ -94,13 +94,20 @@ export const chats = {
     
   get: (id: string) => request<any>(`/api/chats/${id}`),
   
-  create: (data: { title?: string; persona_id?: string }) =>
+  create: (data: { title?: string; persona_id?: string; enabled_tools?: string[] }) =>
     request<any>('/api/chats', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
     
-  update: (id: string, data: { title?: string; persona_id?: string }) =>
+  update: (id: string, data: { 
+    title?: string; 
+    persona_id?: string;
+    tts_enabled?: boolean;
+    tts_voice_id?: string;
+    voice_mode?: boolean;
+    enabled_tools?: string[];
+  }) =>
     request<any>(`/api/chats/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -524,6 +531,7 @@ export interface VoiceInfo {
   description: string;
   available: boolean;
   enabled?: boolean;
+  is_default?: boolean;
 }
 
 export const voiceSettings = {
@@ -533,22 +541,28 @@ export const voiceSettings = {
     enabled_count: number;
     total_count: number;
     available_count: number;
+    default_voice_id: string;
   }>('/api/admin/voices'),
   
   // Get enabled voices (for /converse page - all users)
   listEnabled: () => request<{
     voices: VoiceInfo[];
+    default_voice_id: string;
   }>('/api/admin/voices/enabled'),
   
   // Update enabled voices (admin only)
-  update: (enabledVoiceIds: string[]) =>
+  update: (enabledVoiceIds: string[], defaultVoiceId?: string) =>
     request<{
       success: boolean;
       enabled_count: number;
       enabled_voice_ids: string[];
+      default_voice_id: string;
     }>('/api/admin/voices', {
       method: 'PUT',
-      body: JSON.stringify({ enabled_voice_ids: enabledVoiceIds }),
+      body: JSON.stringify({ 
+        enabled_voice_ids: enabledVoiceIds,
+        default_voice_id: defaultVoiceId
+      }),
     }),
   
   // Reset to defaults (admin only)
@@ -557,7 +571,17 @@ export const voiceSettings = {
       success: boolean;
       message: string;
       enabled_count: number;
+      default_voice_id: string;
     }>('/api/admin/voices/reset', { method: 'POST' }),
+};
+
+// YouTube API
+export const youtube = {
+  recordSelection: (searchId: string, videoId: string) =>
+    request<{ success: boolean }>('/api/youtube/select', {
+      method: 'POST',
+      body: JSON.stringify({ search_id: searchId, video_id: videoId }),
+    }),
 };
 
 export { ApiError };

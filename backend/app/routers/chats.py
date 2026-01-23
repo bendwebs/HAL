@@ -120,6 +120,7 @@ async def create_chat(
         "tts_enabled": chat_data.tts_enabled,
         "tts_voice_id": chat_data.tts_voice_id,
         "voice_mode": chat_data.voice_mode,
+        "enabled_tools": chat_data.enabled_tools,
         "visibility": ChatVisibility.PRIVATE,
         "shared_with": [],
         "share_includes_history": True,
@@ -139,6 +140,7 @@ async def create_chat(
         tts_enabled=chat_doc["tts_enabled"],
         tts_voice_id=chat_doc["tts_voice_id"],
         voice_mode=chat_doc.get("voice_mode", False),
+        enabled_tools=chat_doc.get("enabled_tools"),
         visibility=chat_doc["visibility"],
         shared_with=[],
         share_includes_history=True,
@@ -188,6 +190,8 @@ async def get_chat(
         model_override=chat.get("model_override"),
         tts_enabled=chat.get("tts_enabled", False),
         tts_voice_id=chat.get("tts_voice_id"),
+        voice_mode=chat.get("voice_mode", False),
+        enabled_tools=chat.get("enabled_tools"),
         visibility=chat["visibility"],
         shared_with=[
             SharedUser(**s) for s in chat.get("shared_with", [])
@@ -223,6 +227,8 @@ async def update_chat(
         updates["tts_voice_id"] = update.tts_voice_id
     if update.voice_mode is not None:
         updates["voice_mode"] = update.voice_mode
+    if update.enabled_tools is not None:
+        updates["enabled_tools"] = update.enabled_tools
     
     await database.chats.update_one(
         {"_id": ObjectId(chat_id)},

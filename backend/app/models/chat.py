@@ -32,6 +32,7 @@ class ChatBase(BaseModel):
     tts_enabled: bool = False
     tts_voice_id: Optional[str] = None
     voice_mode: bool = False  # Enable conversational voice mode
+    enabled_tools: Optional[List[str]] = None  # None = use defaults, [] = no tools
 
 
 class ChatCreate(ChatBase):
@@ -47,6 +48,7 @@ class ChatUpdate(BaseModel):
     tts_enabled: Optional[bool] = None
     tts_voice_id: Optional[str] = None
     voice_mode: Optional[bool] = None
+    enabled_tools: Optional[List[str]] = None
 
 
 class ShareRequest(BaseModel):
@@ -85,6 +87,7 @@ class ChatResponse(BaseModel):
     tts_enabled: bool = False
     tts_voice_id: Optional[str] = None
     voice_mode: bool = False
+    enabled_tools: Optional[List[str]] = None
     visibility: ChatVisibility
     shared_with: List[SharedUser]
     share_includes_history: bool

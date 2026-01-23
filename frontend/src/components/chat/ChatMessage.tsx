@@ -13,9 +13,11 @@ import {
   CheckCircle,
   Clock,
   AlertCircle,
-  Loader2
+  Loader2,
+  Youtube
 } from 'lucide-react';
 import { TTSButton } from './TTSButton';
+import YouTubeResults from './YouTubeResults';
 
 interface ChatMessageProps {
   message: Message;
@@ -24,13 +26,15 @@ interface ChatMessageProps {
   isStreaming?: boolean;
   ttsEnabled?: boolean;
   ttsVoiceId?: string;
+  onVideoSelect?: (video: any) => void;
 }
 
-const actionTypeIcons = {
+const actionTypeIcons: Record<string, any> = {
   tool_call: Wrench,
   sub_agent: Bot,
   rag_search: Search,
   memory_recall: Brain,
+  youtube_search: Youtube,
 };
 
 const actionStatusIcons = {
@@ -46,7 +50,8 @@ export default function ChatMessage({
   showActions = true,
   isStreaming = false,
   ttsEnabled = false,
-  ttsVoiceId
+  ttsVoiceId,
+  onVideoSelect
 }: ChatMessageProps) {
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [actionsExpanded, setActionsExpanded] = useState(true);
@@ -54,6 +59,28 @@ export default function ChatMessage({
   const isUser = message.role === 'user';
   const hasThinking = message.thinking && showThinking;
   const hasActions = message.actions && message.actions.length > 0 && showActions;
+  
+  // Check if this message has a YouTube result - if so, we'll hide the text response
+  const hasYouTubeResult = message.actions?.some(
+    action => action.name === 'youtube_search' && 
+    action.result && 
+    typeof action.result === 'object' &&
+    'type' in action.result &&
+    action.result.type === 'youtube_results'
+  );
+  
+  // YouTube results should always be shown, even if showActions is false
+  const hasYouTubeAction = message.actions?.some(action => action.name === 'youtube_search');
+  const shouldShowActions = hasActions || hasYouTubeAction;
+  
+  // Debug logging
+  if (!isUser && message.actions && message.actions.length > 0) {
+    console.log('[ChatMessage] Actions:', message.actions);
+    console.log('[ChatMessage] hasYouTubeResult:', hasYouTubeResult);
+    console.log('[ChatMessage] hasYouTubeAction:', hasYouTubeAction);
+    console.log('[ChatMessage] shouldShowActions:', shouldShowActions);
+    console.log('[ChatMessage] showActions prop:', showActions);
+  }
 
   return (
     <div className={cn(
@@ -97,57 +124,62 @@ export default function ChatMessage({
           </div>
         )}
         
-        {/* Actions section */}
-        {hasActions && (
+        {/* Actions section - always show for YouTube results */}
+        {shouldShowActions && (
           <div className="mb-2">
-            <button
-              onClick={() => setActionsExpanded(!actionsExpanded)}
-              className="flex items-center gap-2 text-sm text-text-muted hover:text-text-secondary transition-colors"
-            >
-              {actionsExpanded ? (
-                <ChevronDown className="w-4 h-4" />
-              ) : (
-                <ChevronRight className="w-4 h-4" />
-              )}
-              <Wrench className="w-4 h-4" />
-              <span>Actions ({message.actions.length})</span>
-            </button>
+            {/* Only show the toggle button if there are non-YouTube actions or showActions is true */}
+            {hasActions && !hasYouTubeResult && (
+              <button
+                onClick={() => setActionsExpanded(!actionsExpanded)}
+                className="flex items-center gap-2 text-sm text-text-muted hover:text-text-secondary transition-colors"
+              >
+                {actionsExpanded ? (
+                  <ChevronDown className="w-4 h-4" />
+                ) : (
+                  <ChevronRight className="w-4 h-4" />
+                )}
+                <Wrench className="w-4 h-4" />
+                <span>Actions ({message.actions.length})</span>
+              </button>
+            )}
             
-            {actionsExpanded && (
-              <div className="mt-2 space-y-2">
+            {(actionsExpanded || hasYouTubeResult) && (
+              <div className={cn("space-y-2", !hasYouTubeResult && "mt-2")}>
                 {message.actions.map((action, idx) => (
-                  <ActionItem key={action.id || idx} action={action} />
+                  <ActionItem key={action.id || idx} action={action} onVideoSelect={onVideoSelect} />
                 ))}
               </div>
             )}
           </div>
         )}
         
-        {/* Message content */}
-        <div className={cn(
-          "px-4 py-3 rounded-2xl",
-          isUser 
-            ? "bg-accent text-white rounded-br-md" 
-            : "bg-surface border border-border rounded-bl-md"
-        )}>
+        {/* Message content - hide if YouTube results are displayed */}
+        {!hasYouTubeResult && (
           <div className={cn(
-            "prose prose-sm max-w-none",
-            isUser ? "prose-invert" : "prose-invert"
+            "px-4 py-3 rounded-2xl",
+            isUser 
+              ? "bg-accent text-white rounded-br-md" 
+              : "bg-surface border border-border rounded-bl-md"
           )}>
-            {message.content ? (
-              <p className="whitespace-pre-wrap m-0">{message.content}</p>
-            ) : isStreaming ? (
-              <span className="inline-flex items-center gap-2 text-text-muted">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Generating response...
-              </span>
-            ) : null}
+            <div className={cn(
+              "prose prose-sm max-w-none",
+              isUser ? "prose-invert" : "prose-invert"
+            )}>
+              {message.content ? (
+                <p className="whitespace-pre-wrap m-0">{message.content}</p>
+              ) : isStreaming ? (
+                <span className="inline-flex items-center gap-2 text-text-muted">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating response...
+                </span>
+              ) : null}
+            </div>
+            
+            {isStreaming && message.content && (
+              <span className="inline-block w-2 h-4 bg-current animate-pulse ml-1" />
+            )}
           </div>
-          
-          {isStreaming && message.content && (
-            <span className="inline-block w-2 h-4 bg-current animate-pulse ml-1" />
-          )}
-        </div>
+        )}
         
         {/* Metadata */}
         <div className="flex items-center gap-3 mt-1 px-1">
@@ -185,19 +217,52 @@ export default function ChatMessage({
   );
 }
 
-function ActionItem({ action }: { action: MessageAction }) {
+function ActionItem({ action, onVideoSelect }: { action: MessageAction; onVideoSelect?: (video: any) => void }) {
   const [expanded, setExpanded] = useState(false);
   
-  const TypeIcon = actionTypeIcons[action.type] || Wrench;
+  // Check if this is a YouTube result
+  const isYouTubeResult = action.name === 'youtube_search' && 
+    action.result && 
+    typeof action.result === 'object' &&
+    'type' in action.result &&
+    action.result.type === 'youtube_results';
+  
+  const TypeIcon = action.name === 'youtube_search' ? Youtube : (actionTypeIcons[action.type] || Wrench);
   const StatusIcon = actionStatusIcons[action.status] || Clock;
   
-  const statusColors = {
+  const statusColors: Record<string, string> = {
     pending: 'text-text-muted',
     running: 'text-info animate-spin',
     complete: 'text-success',
     failed: 'text-error',
   };
 
+  // Render YouTube results specially - just show the video player, no header
+  if (isYouTubeResult && action.status === 'complete') {
+    const ytResult = action.result as {
+      type: string;
+      action: 'play' | 'select' | 'no_results';
+      videos: any[];
+      selected_video?: any;
+      search_id?: string;
+      query: string;
+    };
+    
+    return (
+      <div className="rounded-lg overflow-hidden">
+        <YouTubeResults
+          action={ytResult.action}
+          videos={ytResult.videos}
+          selectedVideo={ytResult.selected_video}
+          searchId={ytResult.search_id}
+          query={ytResult.query}
+          onVideoSelect={onVideoSelect}
+        />
+      </div>
+    );
+  }
+
+  // Standard action rendering
   return (
     <div className="bg-bg-tertiary border border-border rounded-lg overflow-hidden">
       <button
@@ -252,7 +317,7 @@ function ActionItem({ action }: { action: MessageAction }) {
             <div className="mt-2 pl-3 border-l-2 border-border space-y-2">
               <p className="text-xs text-text-muted">Sub-agent actions:</p>
               {action.children.map((child, idx) => (
-                <ActionItem key={child.id || idx} action={child} />
+                <ActionItem key={child.id || idx} action={child} onVideoSelect={onVideoSelect} />
               ))}
             </div>
           )}

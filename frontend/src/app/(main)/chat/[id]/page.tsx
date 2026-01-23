@@ -5,12 +5,25 @@ import { useParams, useRouter } from 'next/navigation';
 import { chats as chatsApi, messages as messagesApi, memories as memoriesApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { useUIStore } from '@/stores/ui';
-import { Chat, Message, StreamChunk } from '@/types';
+import { Chat, Message, StreamChunk, MessageAction } from '@/types';
 import ChatMessage from '@/components/chat/ChatMessage';
 import ChatInput from '@/components/chat/ChatInput';
 import ChatHeader from '@/components/chat/ChatHeader';
+import VideoPlayer, { VideoPlayerVideo } from '@/components/chat/VideoPlayer';
 import { Loader2, Brain, Sparkles, X, Check, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+
+// YouTube video interface for tracking search results
+interface YouTubeVideo {
+  video_id: string;
+  title: string;
+  description: string;
+  channel_title: string;
+  thumbnail: string;
+  url: string;
+  embed_url: string;
+  confidence?: number;
+}
 
 export default function ChatPage() {
   const params = useParams();
@@ -30,6 +43,10 @@ export default function ChatPage() {
   const [isSavingMemories, setIsSavingMemories] = useState(false);
   const streamingMessageRef = useRef<Partial<Message> | null>(null);
   
+  // YouTube video state
+  const [lastYouTubeResults, setLastYouTubeResults] = useState<YouTubeVideo[]>([]);
+  const [activeVideo, setActiveVideo] = useState<VideoPlayerVideo | null>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,6 +57,30 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages, streamingMessage]);
 
+  // Extract YouTube results from existing messages on load
+  useEffect(() => {
+    if (messages.length > 0 && lastYouTubeResults.length === 0) {
+      // Find the most recent YouTube search result in message history
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.actions) {
+          for (const action of msg.actions) {
+            if (action.name === 'youtube_search' && action.result) {
+              const result = action.result;
+              // Handle both direct and wrapped result structures
+              const ytData = result.type === 'youtube_results' ? result : result;
+              if (ytData.videos && ytData.videos.length > 0) {
+                console.log('[YouTube] Restored results from message history:', ytData.videos.length);
+                setLastYouTubeResults(ytData.videos);
+                return;
+              }
+            }
+          }
+        }
+      }
+    }
+  }, [messages]);
+
   const loadChat = async () => {
     try {
       setIsLoading(true);
@@ -49,6 +90,14 @@ export default function ChatPage() {
       ]);
       setChat(chatData);
       setMessages(messagesData);
+      
+      // Debug: log messages with actions
+      console.log('[loadChat] Messages loaded:', messagesData.length);
+      messagesData.forEach((msg: any, i: number) => {
+        if (msg.actions && msg.actions.length > 0) {
+          console.log(`[loadChat] Message ${i} has ${msg.actions.length} actions:`, msg.actions);
+        }
+      });
     } catch (err) {
       console.error('Failed to load chat:', err);
       router.push('/chat');
@@ -61,8 +110,118 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Check if message is a "play N" command for YouTube
+  const parsePlayCommand = (content: string): number | null => {
+    const trimmed = content.trim().toLowerCase();
+    // Match patterns like "play 1", "play video 1", "1", "play #1", "video 1", "play the first one", etc.
+    const patterns = [
+      /^play\s*(?:video\s*)?#?(\d+)$/i,
+      /^(\d+)$/,
+      /^play\s+(\d+)$/i,
+      /^video\s*#?(\d+)$/i,
+      /^#(\d+)$/i,
+      /^play\s+(?:the\s+)?(?:first|1st)(?:\s+(?:one|video))?$/i,  // returns 1
+      /^play\s+(?:the\s+)?(?:second|2nd)(?:\s+(?:one|video))?$/i, // returns 2
+      /^play\s+(?:the\s+)?(?:third|3rd)(?:\s+(?:one|video))?$/i,  // returns 3
+      /^play\s+(?:the\s+)?(?:fourth|4th)(?:\s+(?:one|video))?$/i, // returns 4
+      /^play\s+(?:the\s+)?(?:fifth|5th)(?:\s+(?:one|video))?$/i,  // returns 5
+    ];
+    
+    // Check ordinal patterns first
+    const ordinalMap: Record<string, number> = {
+      'first': 1, '1st': 1,
+      'second': 2, '2nd': 2,
+      'third': 3, '3rd': 3,
+      'fourth': 4, '4th': 4,
+      'fifth': 5, '5th': 5,
+    };
+    
+    for (const [word, num] of Object.entries(ordinalMap)) {
+      if (trimmed.includes(word)) {
+        return num;
+      }
+    }
+    
+    // Check numeric patterns
+    for (const pattern of patterns.slice(0, 5)) {
+      const match = trimmed.match(pattern);
+      if (match) {
+        return parseInt(match[1], 10);
+      }
+    }
+    return null;
+  };
+
+  // Handle playing a video from the last search results
+  const handlePlayVideo = (video: YouTubeVideo) => {
+    setActiveVideo({
+      video_id: video.video_id,
+      title: video.title,
+      channel_title: video.channel_title,
+      url: video.url,
+      embed_url: video.embed_url,
+    });
+    toast.success(`Now playing: ${video.title.substring(0, 50)}...`);
+  };
+
+  // Handle video selection from YouTubeResults component
+  const handleVideoSelect = (video: YouTubeVideo) => {
+    handlePlayVideo(video);
+  };
+
   const handleSendMessage = async (content: string, documentIds: string[] = []) => {
     if (!content.trim() || isSending) return;
+
+    // Check if this is a play command
+    const playIndex = parsePlayCommand(content);
+    if (playIndex !== null) {
+      console.log('[YouTube] Play command detected:', playIndex, 'Available results:', lastYouTubeResults.length);
+      
+      if (lastYouTubeResults.length > 0) {
+        const videoIndex = playIndex - 1; // Convert 1-based to 0-based
+        if (videoIndex >= 0 && videoIndex < lastYouTubeResults.length) {
+          const video = lastYouTubeResults[videoIndex];
+          handlePlayVideo(video);
+          
+          // Add a synthetic user message and assistant response
+          const userMessage: Message = {
+            id: `temp-${Date.now()}`,
+            chat_id: chatId,
+            role: 'user',
+            content,
+            thinking: null,
+            actions: [],
+            document_ids: [],
+            model_used: null,
+            token_usage: null,
+            created_at: new Date().toISOString(),
+          };
+          
+          const assistantMessage: Message = {
+            id: `temp-${Date.now() + 1}`,
+            chat_id: chatId,
+            role: 'assistant',
+            content: `▶️ Now playing: **${video.title}** by ${video.channel_title}`,
+            thinking: null,
+            actions: [],
+            document_ids: [],
+            model_used: null,
+            token_usage: null,
+            created_at: new Date().toISOString(),
+          };
+          
+          setMessages(prev => [...prev, userMessage, assistantMessage]);
+          return;
+        } else {
+          toast.error(`Invalid video number. Please choose 1-${lastYouTubeResults.length}`);
+          return;
+        }
+      } else {
+        // No YouTube results available, show helpful message
+        toast.error('No video search results available. Search for a video first!');
+        return;
+      }
+    }
 
     // Add user message immediately
     const userMessage: Message = {
@@ -153,10 +312,28 @@ export default function ChatPage() {
         break;
         
       case 'action_complete':
+        // Track YouTube search results for play commands
+        const actionData = chunk.data;
+        console.log('[Stream] action_complete received:', actionData.name, actionData);
+        
+        if (actionData.name === 'youtube_search' && actionData.result) {
+          // Handle both direct result and wrapped result structures
+          const result = actionData.result;
+          console.log('[Stream] YouTube result:', result);
+          const ytData = result.type === 'youtube_results' ? result : 
+                        (result.result?.type === 'youtube_results' ? result.result : result);
+          
+          if (ytData.videos && ytData.videos.length > 0) {
+            console.log('[YouTube] Setting lastYouTubeResults:', ytData.videos.length, 'videos');
+            setLastYouTubeResults(ytData.videos);
+          }
+        }
+        
         streamingMessageRef.current = { 
           ...current, 
           actions: [...(current.actions || []), chunk.data as MessageAction] 
         };
+        console.log('[Stream] Updated actions:', streamingMessageRef.current.actions);
         setStreamingMessage(streamingMessageRef.current);
         break;
         
@@ -232,6 +409,7 @@ export default function ChatPage() {
               showActions={showActions}
               ttsEnabled={chat.tts_enabled}
               ttsVoiceId={chat.tts_voice_id || undefined}
+              onVideoSelect={handleVideoSelect}
             />
           ))}
           
@@ -243,6 +421,7 @@ export default function ChatPage() {
               isStreaming
               ttsEnabled={chat.tts_enabled}
               ttsVoiceId={chat.tts_voice_id || undefined}
+              onVideoSelect={handleVideoSelect}
             />
           )}
           
@@ -332,7 +511,17 @@ export default function ChatPage() {
         onSend={handleSendMessage}
         disabled={isSending}
         canWrite={chat.can_write}
+        chat={chat}
+        onChatUpdate={setChat}
       />
+      
+      {/* Floating Video Player - rendered outside chat container */}
+      {activeVideo && (
+        <VideoPlayer 
+          video={activeVideo} 
+          onClose={() => setActiveVideo(null)} 
+        />
+      )}
     </div>
   );
 }

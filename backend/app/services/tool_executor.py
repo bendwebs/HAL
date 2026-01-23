@@ -98,6 +98,19 @@ class ToolExecutor:
                     },
                     "required": ["query"]
                 }
+            },
+            "youtube_search": {
+                "name": "youtube_search",
+                "display_name": "YouTube Search",
+                "description": "Search and play YouTube videos in the chat",
+                "icon": "📺",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Video search query"}
+                    },
+                    "required": ["query"]
+                }
             }
         }
     
