@@ -1,5 +1,8 @@
-fix: improve SD generation timeout and add progress check
+fix: disable HTTP keepalive for SD requests to prevent connection reuse issues
 
-- Use explicit httpx.Timeout with separate connect/read/write timeouts
-- Increased read timeout to 5 minutes for slow generations
-- Added get_progress() method to check SD generation status
+Force fresh connections for each SD API request by:
+- Disabling HTTP/2
+- Setting max_keepalive_connections=0
+- Adding Connection: close header
+
+This may fix the issue where second image generation hangs.

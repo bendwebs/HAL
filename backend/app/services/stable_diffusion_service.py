@@ -173,11 +173,17 @@ class StableDiffusionService:
                 write=30.0,        # 30s to write request
                 pool=30.0          # 30s to acquire connection from pool
             )
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            # Disable HTTP/2 and keep-alive to ensure fresh connections
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                http2=False,
+                limits=httpx.Limits(max_keepalive_connections=0)
+            ) as client:
                 logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
                 response = await client.post(
                     f"{self.api_url}/sdapi/v1/txt2img",
-                    json=payload
+                    json=payload,
+                    headers={"Connection": "close"}  # Force connection close
                 )
                 logger.info(f"txt2img response status: {response.status_code}")
                 response.raise_for_status()
