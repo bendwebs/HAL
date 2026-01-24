@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { imageGen } from '@/lib/api';
+import { imageGen, API_URL } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import {
   Image as ImageIcon,
@@ -55,7 +55,6 @@ const DIMENSION_PRESETS = [
 
 export default function GeneratePage() {
   const { user } = useAuthStore();
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   // SD Status
   const [sdStatus, setSdStatus] = useState<{

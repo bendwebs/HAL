@@ -1,5 +1,5 @@
-fix: SD availability check timeout and autolaunch flag
+fix: export API_URL from api.ts and use in generate page
 
-- Increased check_availability timeout from 5s to 10s (SD can be slow to respond)
-- Changed log level to debug for successful availability checks
-- Added --autolaunch=false flag to prevent browser from opening when SD starts
+The generate page was defining its own API_URL which could have a
+different value than the centralized one. Now imports from api.ts
+to ensure consistent URL usage.

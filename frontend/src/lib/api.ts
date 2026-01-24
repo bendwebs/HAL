@@ -2,7 +2,7 @@
  * API Client for HAL Backend
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Debug log - will show in browser console
 if (typeof window !== 'undefined') {
