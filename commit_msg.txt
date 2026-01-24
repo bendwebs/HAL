@@ -1,5 +1,8 @@
-revert to --api only (remove --nowebui for compatibility)
+fix: return SD service result directly, add debug logging
 
-Some SD versions have issues with --nowebui flag causing the API
-to not start properly. Reverting to --api only which starts the
-web UI but also enables the API endpoint.
+The _execute_tool was creating a new result object instead of
+using the service's result which already had the correct structure.
+This caused the 'type: generated_image' to potentially be lost.
+
+Now we return the service result directly and added debug logging
+to track what's being sent in action_complete.

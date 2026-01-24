@@ -371,22 +371,9 @@ class AgentSystem:
                 
                 if result.get("success"):
                     await tool_executor.record_tool_usage("generate_image")
-                    
-                    # Return structured data for frontend to render
-                    image_result = {
-                        "success": True,
-                        "type": "generated_image",
-                        "images": result.get("images", []),
-                        "prompt": prompt,
-                        "negative_prompt": negative_prompt,
-                        "width": width,
-                        "height": height,
-                        "steps": steps,
-                        "seed": result.get("seed"),
-                        "message": f"Generated image for: {prompt[:50]}..."
-                    }
-                    logger.info(f"[GENERATE_IMAGE] Successfully generated {len(image_result.get('images', []))} image(s)")
-                    return image_result
+                    logger.info(f"[GENERATE_IMAGE] Successfully generated {len(result.get('images', []))} image(s)")
+                    # Return the service result directly - it already has the correct structure
+                    return result
                 else:
                     return {"success": False, "error": result.get("error", "Image generation failed")}
             
@@ -624,7 +611,7 @@ class AgentSystem:
             # For simple results, extract just the result/error string
             if result.get("type") in ["youtube_results", "generated_image"]:
                 result_data = result  # Pass full structured data
-                logger.info(f"[{tool_name.upper()}] Yielding action_complete with full result data")
+                logger.info(f"[{tool_name.upper()}] Yielding action_complete with full result data, type={result.get('type')}, has_images={bool(result.get('images'))}")
             else:
                 result_data = result.get("result") or result.get("error")
             
