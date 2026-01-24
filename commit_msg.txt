@@ -1,5 +1,5 @@
-fix: use synchronous requests library in thread pool for SD API
+fix: auto-restart SD if generation times out
 
-Using synchronous requests library run in a thread pool executor.
-This completely isolates the HTTP request from the async event loop
-and should avoid any connection pooling or async-related issues.
+SD appears to get stuck after first generation. This adds automatic
+restart if the request times out after 60 seconds, then retries
+the generation request.

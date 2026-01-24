@@ -178,7 +178,7 @@ class StableDiffusionService:
                 return requests.post(
                     f"{self.api_url}/sdapi/v1/txt2img",
                     json=payload,
-                    timeout=300
+                    timeout=60  # 60 second timeout - if it takes longer, SD is probably stuck
                 )
             
             logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
@@ -186,7 +186,25 @@ class StableDiffusionService:
             # Run sync request in thread pool
             loop = asyncio.get_event_loop()
             with ThreadPoolExecutor() as executor:
-                response = await loop.run_in_executor(executor, make_request)
+                try:
+                    response = await asyncio.wait_for(
+                        loop.run_in_executor(executor, make_request),
+                        timeout=65  # Slightly longer than requests timeout
+                    )
+                except (asyncio.TimeoutError, requests.Timeout):
+                    # SD is probably stuck - restart it
+                    logger.warning("SD request timed out - restarting SD...")
+                    from app.services.sd_process_manager import get_sd_process_manager
+                    manager = get_sd_process_manager()
+                    await manager.stop()
+                    await asyncio.sleep(2)
+                    restart_result = await manager.start()
+                    if not restart_result.get("success"):
+                        return {"success": False, "error": "SD timed out and failed to restart"}
+                    
+                    # Retry the request
+                    logger.info("Retrying generation after SD restart...")
+                    response = await loop.run_in_executor(executor, make_request)
             
             logger.info(f"txt2img response status: {response.status_code}")
             response.raise_for_status()
