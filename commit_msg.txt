@@ -1,1 +1,1 @@
-debug: add message ID to logs
+debug: log action_complete in API stream

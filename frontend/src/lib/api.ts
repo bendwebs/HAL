@@ -222,6 +222,10 @@ export const messages = {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6));
+            // Debug: log action_complete events
+            if (data.type === 'action_complete') {
+              console.log('[API Stream] action_complete received:', data);
+            }
             yield data;
           } catch {}
         }
