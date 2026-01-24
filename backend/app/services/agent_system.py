@@ -353,6 +353,10 @@ class AgentSystem:
                 height = min(parameters.get("height", 512), 1024)
                 steps = min(parameters.get("steps", 20), 50)  # Cap at 50 steps
                 
+                # Check if SD needs to start (this is quick)
+                if not await sd.check_availability():
+                    logger.info(f"[GENERATE_IMAGE] SD not running, will auto-start...")
+                
                 logger.info(f"[GENERATE_IMAGE] Generating image: {prompt[:100]}...")
                 
                 # generate_image now handles ensure_running internally

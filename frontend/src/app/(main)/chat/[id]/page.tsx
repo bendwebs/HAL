@@ -310,6 +310,16 @@ export default function ChatPage() {
         };
         setStreamingMessage(streamingMessageRef.current);
         break;
+      
+      case 'action_start':
+        // Tool is starting - show it as running
+        console.log('[Stream] action_start received:', chunk.data.name, chunk.data);
+        streamingMessageRef.current = { 
+          ...current, 
+          actions: [...(current.actions || []), chunk.data as MessageAction] 
+        };
+        setStreamingMessage(streamingMessageRef.current);
+        break;
         
       case 'action_complete':
         // Track YouTube search results for play commands
@@ -329,10 +339,22 @@ export default function ChatPage() {
           }
         }
         
-        streamingMessageRef.current = { 
-          ...current, 
-          actions: [...(current.actions || []), chunk.data as MessageAction] 
-        };
+        // Update existing action (from action_start) or add new one
+        const existingActions = current.actions || [];
+        const actionIndex = existingActions.findIndex(a => a.id === actionData.id);
+        
+        if (actionIndex >= 0) {
+          // Update existing action
+          const updatedActions = [...existingActions];
+          updatedActions[actionIndex] = chunk.data as MessageAction;
+          streamingMessageRef.current = { ...current, actions: updatedActions };
+        } else {
+          // Add as new action (fallback)
+          streamingMessageRef.current = { 
+            ...current, 
+            actions: [...existingActions, chunk.data as MessageAction] 
+          };
+        }
         console.log('[Stream] Updated actions:', streamingMessageRef.current.actions);
         setStreamingMessage(streamingMessageRef.current);
         break;

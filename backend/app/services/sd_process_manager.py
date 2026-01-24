@@ -167,13 +167,19 @@ call "{webui_user}"
                 # Wait for API to become ready
                 start_time = asyncio.get_event_loop().time()
                 check_interval = 3
+                last_log_time = 0
                 
                 while (asyncio.get_event_loop().time() - start_time) < self.startup_timeout:
                     elapsed = int(asyncio.get_event_loop().time() - start_time)
                     
+                    # Log every 10 seconds
+                    if elapsed - last_log_time >= 10:
+                        logger.info(f"[SD STARTUP] Waiting for API... ({elapsed}s / {self.startup_timeout}s)")
+                        last_log_time = elapsed
+                    
                     if await self.check_api_ready():
                         self._starting = False
-                        logger.info(f"Stable Diffusion API is ready after {elapsed}s")
+                        logger.info(f"[SD STARTUP] Stable Diffusion API is ready after {elapsed}s")
                         return {
                             "success": True,
                             "message": f"Stable Diffusion started successfully in {elapsed}s",
@@ -184,14 +190,11 @@ call "{webui_user}"
                     if self.process.poll() is not None:
                         self._starting = False
                         exit_code = self.process.returncode
-                        logger.error(f"SD process exited with code {exit_code}")
+                        logger.error(f"[SD STARTUP] Process exited with code {exit_code}")
                         return {
                             "success": False,
                             "error": f"Stable Diffusion process exited unexpectedly (code {exit_code})"
                         }
-                    
-                    if elapsed % 15 == 0:
-                        logger.info(f"Waiting for SD API... ({elapsed}s / {self.startup_timeout}s)")
                     
                     await asyncio.sleep(check_interval)
                 
