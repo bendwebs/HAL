@@ -370,10 +370,12 @@ export default function ChatPage() {
         
       case 'saved':
         // Message has been saved - move from streaming to messages list
+        console.log('[Stream] saved - streamingMessageRef actions:', streamingMessageRef.current?.actions);
         const finalMessage: Message = {
           ...streamingMessageRef.current,
           id: chunk.data.message_id,
         } as Message;
+        console.log('[Stream] saved - finalMessage actions:', finalMessage.actions);
         streamingMessageRef.current = null;
         setStreamingMessage(null);
         setMessages(msgs => [...msgs, finalMessage]);

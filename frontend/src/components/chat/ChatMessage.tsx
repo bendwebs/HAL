@@ -104,10 +104,10 @@ export default function ChatMessage({
   
   // Debug logging
   if (!isUser && message.actions && message.actions.length > 0) {
-    console.log('[ChatMessage] Actions:', message.actions);
-    console.log('[ChatMessage] hasYouTubeResult:', hasYouTubeResult);
-    console.log('[ChatMessage] hasGeneratedImageResult:', hasGeneratedImageResult);
-    console.log('[ChatMessage] shouldShowActions:', shouldShowActions);
+    console.log('[ChatMessage] msgId:', message.id, 'Actions:', message.actions);
+    console.log('[ChatMessage] msgId:', message.id, 'hasYouTubeResult:', hasYouTubeResult);
+    console.log('[ChatMessage] msgId:', message.id, 'hasGeneratedImageResult:', hasGeneratedImageResult);
+    console.log('[ChatMessage] msgId:', message.id, 'shouldShowActions:', shouldShowActions);
   }
 
   return (

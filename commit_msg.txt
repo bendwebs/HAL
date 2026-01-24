@@ -1,1 +1,1 @@
-add more debug logging for image result detection
+debug: add message ID to logs
