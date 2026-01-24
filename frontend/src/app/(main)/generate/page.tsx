@@ -202,20 +202,39 @@ export default function GeneratePage() {
     }
   };
 
-  // Delete image
+  // Delete image with in-app confirmation
   const handleDeleteImage = async (filename: string) => {
-    if (!confirm('Delete this image?')) return;
-    
-    try {
-      await imageGen.deleteImage(filename);
-      toast.success('Image deleted');
-      setGallery(prev => prev.filter(img => img.filename !== filename));
-      if (selectedImage?.filename === filename) {
-        setSelectedImage(null);
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete image');
-    }
+    toast((t) => (
+      <div className="flex flex-col gap-2">
+        <span>Delete this image?</span>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                await imageGen.deleteImage(filename);
+                toast.success('Image deleted');
+                setGallery(prev => prev.filter(img => img.filename !== filename));
+                if (selectedImage?.filename === filename) {
+                  setSelectedImage(null);
+                }
+              } catch (err: any) {
+                toast.error(err.message || 'Failed to delete image');
+              }
+            }}
+            className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600"
+          >
+            Delete
+          </button>
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="px-3 py-1 bg-gray-500 text-white rounded text-sm hover:bg-gray-600"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    ), { duration: 10000 });
   };
 
   // Download image

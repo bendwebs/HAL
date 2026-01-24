@@ -1,10 +1,4 @@
-fix: make generated image serving endpoint public
+fix: use in-app toast confirmation for image deletion
 
-Removed authentication requirement from the image serving endpoint.
-This allows images to be displayed in <img> tags without needing
-auth headers (which browsers can't add to img src requests).
-
-Security is maintained through:
-- User ID in path (24-char MongoDB ObjectId)
-- UUID-based filenames that are unguessable
-- Path traversal validation
+Replace browser's native confirm() dialog with a toast notification
+that has Delete/Cancel buttons for a better in-app experience.
