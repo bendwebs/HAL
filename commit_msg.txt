@@ -1,8 +1,5 @@
-fix: disable HTTP keepalive for SD requests to prevent connection reuse issues
+fix: add interrupt call and delay before SD generation
 
-Force fresh connections for each SD API request by:
-- Disabling HTTP/2
-- Setting max_keepalive_connections=0
-- Adding Connection: close header
-
-This may fix the issue where second image generation hangs.
+Call the SD interrupt endpoint before each generation to clear any
+pending jobs, then wait 0.5s for SD to settle. This may fix the
+issue where sequential image generations hang.

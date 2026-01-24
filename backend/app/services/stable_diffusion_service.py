@@ -173,7 +173,20 @@ class StableDiffusionService:
                 write=30.0,        # 30s to write request
                 pool=30.0          # 30s to acquire connection from pool
             )
-            # Disable HTTP/2 and keep-alive to ensure fresh connections
+            
+            # First, ensure SD is not busy - call interrupt and wait a moment
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as interrupt_client:
+                    await interrupt_client.post(f"{self.api_url}/sdapi/v1/interrupt")
+                    logger.debug("Sent interrupt to clear any pending jobs")
+            except:
+                pass  # Ignore interrupt errors
+            
+            # Small delay to let SD settle
+            import asyncio
+            await asyncio.sleep(0.5)
+            
+            # Now make the generation request
             async with httpx.AsyncClient(
                 timeout=timeout,
                 http2=False,
