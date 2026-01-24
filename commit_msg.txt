@@ -1,1 +1,5 @@
-increase SD timeout to 180s and add request logging
+revert to --api only (remove --nowebui for compatibility)
+
+Some SD versions have issues with --nowebui flag causing the API
+to not start properly. Reverting to --api only which starts the
+web UI but also enables the API endpoint.
