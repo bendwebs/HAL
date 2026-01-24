@@ -64,12 +64,11 @@ class SDProcessManager:
             # Portable install - create API launcher that passes args to launch.py
             launcher_path = sd_path / 'run_api.bat'
             
-            # Use --api only (not --nowebui) for better compatibility
-            # Some SD versions have issues with --nowebui
+            # --api enables API, --autolaunch disables browser opening
             launcher_content = f'''@echo off
 call "{env_bat}"
 cd /d "{webui_dir}"
-call webui.bat --api
+call webui.bat --api --autolaunch=false
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
             with open(launcher_path, 'w') as f:
@@ -82,9 +81,9 @@ call webui.bat --api
         if webui_user.exists():
             launcher_path = sd_path / 'webui-api.bat'
             
-            # Pass --api as argument
+            # Pass --api and --autolaunch as arguments
             launcher_content = f'''@echo off
-call "{webui_user}" --api
+call "{webui_user}" --api --autolaunch=false
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
             with open(launcher_path, 'w') as f:

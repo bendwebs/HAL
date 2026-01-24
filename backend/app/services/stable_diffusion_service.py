@@ -37,11 +37,11 @@ class StableDiffusionService:
     async def check_availability(self) -> bool:
         """Check if Stable Diffusion API is reachable"""
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:  # Increased timeout
                 response = await client.get(f"{self.api_url}/sdapi/v1/options")
                 self._available = response.status_code == 200
                 if self._available:
-                    logger.info(f"Stable Diffusion API available at {self.api_url}")
+                    logger.debug(f"Stable Diffusion API available at {self.api_url}")
                 return self._available
         except Exception as e:
             logger.warning(f"Stable Diffusion API not available: {e}")
