@@ -1,1 +1,5 @@
-fix: correct indentation errors in stable_diffusion_service.py
+fix: use synchronous requests library in thread pool for SD API
+
+Using synchronous requests library run in a thread pool executor.
+This completely isolates the HTTP request from the async event loop
+and should avoid any connection pooling or async-related issues.

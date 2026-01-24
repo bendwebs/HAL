@@ -3,6 +3,7 @@
 from typing import Dict, Any, Optional
 import logging
 import httpx
+import requests
 import base64
 import os
 from datetime import datetime
@@ -167,38 +168,29 @@ class StableDiffusionService:
         
         try:
             import asyncio
-            import subprocess
             import json as json_module
             
-            # Use subprocess to make the request completely isolated from async event loop
-            # This avoids any potential connection pooling or async issues
-            curl_payload = json_module.dumps(payload)
+            # Use synchronous requests in a thread to avoid async connection issues
+            import requests
+            from concurrent.futures import ThreadPoolExecutor
             
-            logger.info(f"Sending txt2img request via curl to {self.api_url}/sdapi/v1/txt2img...")
+            def make_request():
+                return requests.post(
+                    f"{self.api_url}/sdapi/v1/txt2img",
+                    json=payload,
+                    timeout=300
+                )
             
-            # Run curl in a subprocess
-            process = await asyncio.create_subprocess_exec(
-                'curl', '-s', '-X', 'POST',
-                f'{self.api_url}/sdapi/v1/txt2img',
-                '-H', 'Content-Type: application/json',
-                '-d', curl_payload,
-                '--max-time', '300',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
             
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=310  # Slightly longer than curl timeout
-            )
+            # Run sync request in thread pool
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                response = await loop.run_in_executor(executor, make_request)
             
-            if process.returncode != 0:
-                error_msg = stderr.decode() if stderr else f"curl failed with code {process.returncode}"
-                logger.error(f"curl failed: {error_msg}")
-                return {"success": False, "error": error_msg}
-            
-            result = json_module.loads(stdout.decode())
-            logger.info(f"txt2img response received successfully")
+            logger.info(f"txt2img response status: {response.status_code}")
+            response.raise_for_status()
+            result = response.json()
             
             images = result.get("images", [])
             if not images:
@@ -254,7 +246,7 @@ class StableDiffusionService:
                 "generation_time_ms": int(info.get("generation_time", 0) * 1000) if info.get("generation_time") else None
             }
                 
-        except asyncio.TimeoutError:
+        except requests.Timeout:
             logger.error("Image generation timed out")
             return {
                 "success": False,
