@@ -1,6 +1,31 @@
-Auto-generate titles for voice conversations
+feat: add Stable Diffusion image generation tool (generate_image)
 
-- Extend auto-title generation to include "Voice Conversation" chats
-- Previously only "New Chat" titles were auto-generated
-- Title is generated after first message exchange using the LLM
-- Frontend already handles title_updated events, no changes needed
+Adds a new tool that allows the LLM to generate images using a local
+Stable Diffusion API (Automatic1111, SD.Next, or ComfyUI with API).
+
+Backend changes:
+- New stable_diffusion_service.py with txt2img and img2img support
+- New images router for serving generated images and SD status
+- Added generate_image to tool definitions in tool_executor.py
+- Added generate_image tool execution in agent_system.py
+- Added SD config options to config.py and .env.example
+
+Frontend changes:
+- New GeneratedImage.tsx component with:
+  - Image display with hover controls
+  - Fullscreen modal view
+  - Download functionality
+  - Generation details toggle (prompt, size, steps, seed)
+- Updated ChatMessage.tsx to render generated images inline
+- Images displayed similar to YouTube results (replaces text response)
+
+Configuration:
+- SD_API_URL (default: http://127.0.0.1:7860)
+- SD_DEFAULT_STEPS (default: 20)
+- SD_DEFAULT_CFG (default: 7.0)
+- SD_DEFAULT_SAMPLER (default: DPM++ 2M Karras)
+
+Usage:
+1. Start Automatic1111 with --api flag
+2. Enable generate_image tool in chat
+3. Ask HAL to "create an image of..." or "generate a picture of..."

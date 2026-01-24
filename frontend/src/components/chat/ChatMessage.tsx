@@ -14,10 +14,12 @@ import {
   Clock,
   AlertCircle,
   Loader2,
-  Youtube
+  Youtube,
+  ImageIcon
 } from 'lucide-react';
 import { TTSButton } from './TTSButton';
 import YouTubeResults from './YouTubeResults';
+import GeneratedImage from './GeneratedImage';
 
 interface ChatMessageProps {
   message: Message;
@@ -35,6 +37,7 @@ const actionTypeIcons: Record<string, any> = {
   rag_search: Search,
   memory_recall: Brain,
   youtube_search: Youtube,
+  generate_image: ImageIcon,
 };
 
 const actionStatusIcons = {
@@ -69,17 +72,29 @@ export default function ChatMessage({
     action.result.type === 'youtube_results'
   );
   
-  // YouTube results should always be shown, even if showActions is false
+  // Check if this message has a generated image result
+  const hasGeneratedImageResult = message.actions?.some(
+    action => action.name === 'generate_image' && 
+    action.result && 
+    typeof action.result === 'object' &&
+    'type' in action.result &&
+    action.result.type === 'generated_image'
+  );
+  
+  // YouTube and image results should always be shown, even if showActions is false
   const hasYouTubeAction = message.actions?.some(action => action.name === 'youtube_search');
-  const shouldShowActions = hasActions || hasYouTubeAction;
+  const hasGenerateImageAction = message.actions?.some(action => action.name === 'generate_image');
+  const shouldShowActions = hasActions || hasYouTubeAction || hasGenerateImageAction;
+  
+  // Hide text response if we have visual results
+  const hasVisualResult = hasYouTubeResult || hasGeneratedImageResult;
   
   // Debug logging
   if (!isUser && message.actions && message.actions.length > 0) {
     console.log('[ChatMessage] Actions:', message.actions);
     console.log('[ChatMessage] hasYouTubeResult:', hasYouTubeResult);
-    console.log('[ChatMessage] hasYouTubeAction:', hasYouTubeAction);
+    console.log('[ChatMessage] hasGeneratedImageResult:', hasGeneratedImageResult);
     console.log('[ChatMessage] shouldShowActions:', shouldShowActions);
-    console.log('[ChatMessage] showActions prop:', showActions);
   }
 
   return (
@@ -124,11 +139,11 @@ export default function ChatMessage({
           </div>
         )}
         
-        {/* Actions section - always show for YouTube results */}
+        {/* Actions section - always show for YouTube/image results */}
         {shouldShowActions && (
           <div className="mb-2">
-            {/* Only show the toggle button if there are non-YouTube actions or showActions is true */}
-            {hasActions && !hasYouTubeResult && (
+            {/* Only show the toggle button if there are non-visual actions */}
+            {hasActions && !hasVisualResult && (
               <button
                 onClick={() => setActionsExpanded(!actionsExpanded)}
                 className="flex items-center gap-2 text-sm text-text-muted hover:text-text-secondary transition-colors"
@@ -143,8 +158,8 @@ export default function ChatMessage({
               </button>
             )}
             
-            {(actionsExpanded || hasYouTubeResult) && (
-              <div className={cn("space-y-2", !hasYouTubeResult && "mt-2")}>
+            {(actionsExpanded || hasVisualResult) && (
+              <div className={cn("space-y-2", !hasVisualResult && "mt-2")}>
                 {message.actions.map((action, idx) => (
                   <ActionItem key={action.id || idx} action={action} onVideoSelect={onVideoSelect} />
                 ))}
@@ -153,8 +168,8 @@ export default function ChatMessage({
           </div>
         )}
         
-        {/* Message content - hide if YouTube results are displayed */}
-        {!hasYouTubeResult && (
+        {/* Message content - hide if visual results are displayed */}
+        {!hasVisualResult && (
           <div className={cn(
             "px-4 py-3 rounded-2xl",
             isUser 
@@ -227,7 +242,18 @@ function ActionItem({ action, onVideoSelect }: { action: MessageAction; onVideoS
     'type' in action.result &&
     action.result.type === 'youtube_results';
   
-  const TypeIcon = action.name === 'youtube_search' ? Youtube : (actionTypeIcons[action.type] || Wrench);
+  // Check if this is a generated image result
+  const isGeneratedImageResult = action.name === 'generate_image' && 
+    action.result && 
+    typeof action.result === 'object' &&
+    'type' in action.result &&
+    action.result.type === 'generated_image';
+  
+  const TypeIcon = action.name === 'youtube_search' 
+    ? Youtube 
+    : action.name === 'generate_image'
+    ? ImageIcon
+    : (actionTypeIcons[action.type] || Wrench);
   const StatusIcon = actionStatusIcons[action.status] || Clock;
   
   const statusColors: Record<string, string> = {
@@ -258,6 +284,27 @@ function ActionItem({ action, onVideoSelect }: { action: MessageAction; onVideoS
           query={ytResult.query}
           onVideoSelect={onVideoSelect}
         />
+      </div>
+    );
+  }
+  
+  // Render generated image results specially
+  if (isGeneratedImageResult && action.status === 'complete') {
+    const imageResult = action.result as {
+      type: string;
+      images: any[];
+      prompt: string;
+      negative_prompt?: string;
+      width: number;
+      height: number;
+      steps: number;
+      seed?: number;
+      message?: string;
+    };
+    
+    return (
+      <div className="rounded-lg overflow-hidden">
+        <GeneratedImage result={imageResult} />
       </div>
     );
   }

@@ -17,6 +17,7 @@ from app.services.resource_monitor import get_resource_monitor
 from app.services.tool_executor import get_tool_executor
 from app.services.web_search import get_web_search_service
 from app.services.youtube_service import get_youtube_service
+from app.services.stable_diffusion_service import get_stable_diffusion_service
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,35 @@ TOOL_DEFINITIONS = {
                     }
                 },
                 "required": ["expression"]
+            }
+        }
+    },
+    "generate_image": {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate an image using Stable Diffusion AI. Use when the user asks to create, generate, draw, or make an image, picture, artwork, illustration, or photo. Provide a detailed prompt describing what should be in the image.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Detailed description of the image to generate. Include style (realistic, anime, oil painting, etc.), subject, setting, lighting, colors, mood, and composition details."
+                    },
+                    "negative_prompt": {
+                        "type": "string",
+                        "description": "Things to avoid in the image. Default: 'blurry, bad quality, distorted, ugly, deformed'"
+                    },
+                    "width": {
+                        "type": "integer",
+                        "description": "Image width in pixels. Default 512. Use 768 or 1024 for larger images."
+                    },
+                    "height": {
+                        "type": "integer",
+                        "description": "Image height in pixels. Default 512. Use 768 or 1024 for larger images."
+                    }
+                },
+                "required": ["prompt"]
             }
         }
     }
@@ -309,6 +339,57 @@ class AgentSystem:
                     return youtube_result
                 else:
                     return {"success": False, "error": result.get("error", "YouTube search failed")}
+            
+            elif tool_name == "generate_image":
+                sd = get_stable_diffusion_service()
+                
+                # Check availability
+                if not await sd.check_availability():
+                    return {
+                        "success": False, 
+                        "error": "Stable Diffusion is not available. Make sure Automatic1111 is running with --api flag at http://127.0.0.1:7860"
+                    }
+                
+                prompt = parameters.get("prompt", "")
+                if not prompt:
+                    return {"success": False, "error": "No prompt provided for image generation"}
+                
+                # Get optional parameters with defaults
+                negative_prompt = parameters.get("negative_prompt", "")
+                width = min(parameters.get("width", 512), 1024)  # Cap at 1024
+                height = min(parameters.get("height", 512), 1024)
+                steps = min(parameters.get("steps", 20), 50)  # Cap at 50 steps
+                
+                logger.info(f"[GENERATE_IMAGE] Generating image: {prompt[:100]}...")
+                
+                result = await sd.generate_image(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    steps=steps
+                )
+                
+                if result.get("success"):
+                    await tool_executor.record_tool_usage("generate_image")
+                    
+                    # Return structured data for frontend to render
+                    image_result = {
+                        "success": True,
+                        "type": "generated_image",
+                        "images": result.get("images", []),
+                        "prompt": prompt,
+                        "negative_prompt": negative_prompt,
+                        "width": width,
+                        "height": height,
+                        "steps": steps,
+                        "seed": result.get("seed"),
+                        "message": f"Generated image for: {prompt[:50]}..."
+                    }
+                    logger.info(f"[GENERATE_IMAGE] Successfully generated {len(image_result.get('images', []))} image(s)")
+                    return image_result
+                else:
+                    return {"success": False, "error": result.get("error", "Image generation failed")}
             
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
@@ -674,6 +755,7 @@ class AgentSystem:
         all_tools = {
             "web_search": "For current events, news, prices, recent information",
             "youtube_search": "To search and play YouTube videos - use when user wants to watch, play, or find videos",
+            "generate_image": "To create AI-generated images - use when user asks to create, generate, draw, or make an image/picture/artwork",
             "document_search": "To find info in user's uploaded documents",
             "memory_recall": "To remember things about this user",
             "memory_store": "To save important info about the user (name, preferences, etc)",
