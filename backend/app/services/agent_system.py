@@ -409,7 +409,7 @@ class AgentSystem:
         
         # Default tools if not specified
         if enabled_tools is None:
-            enabled_tools = ["web_search", "youtube_search", "document_search", "memory_recall", "memory_store", "calculator"]
+            enabled_tools = ["web_search", "youtube_search", "generate_image", "document_search", "memory_recall", "memory_store", "calculator"]
         
         # Get system prompt with tool availability info and memory context for voice mode
         system_prompt = await self._get_system_prompt(

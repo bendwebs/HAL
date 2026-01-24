@@ -1,28 +1,24 @@
-feat: add SD auto-start subprocess manager and tool refresh endpoint
+fix: show all tools dynamically in ToolToggle component
 
-Stable Diffusion Auto-Start:
-- New sd_process_manager.py handles starting SD as a subprocess
-- Starts SD headless with --api --nowebui flags
-- Auto-starts when generate_image tool is used (if SD_WEBUI_PATH configured)
-- Waits for API to become ready before proceeding
-- Supports both Windows (webui-user.bat) and Linux (webui.sh)
-
-New Config Options:
-- SD_WEBUI_PATH: Path to Automatic1111 webui folder
-- SD_STARTUP_TIMEOUT: Seconds to wait for SD to start (default 120)
-
-New API Endpoints:
-- POST /api/images/sd/start - Manually start SD server
-- POST /api/images/sd/stop - Stop SD server subprocess
-- POST /api/tools/refresh - Refresh tool definitions from code
+Previously, ToolToggle only showed 6 hardcoded tools from DEFAULT_TOOLS.
+Now it dynamically loads and displays ALL tools from the API.
 
 Changes:
-- stable_diffusion_service.py: Added ensure_running() method
-- generate_image() now auto-starts SD if path is configured
-- images.py: Added start/stop endpoints and process status
-- tools.py: Added refresh endpoint to sync new tools to DB
-- Updated .env.example with auto-start documentation
+- ToolToggle.tsx: Render tools from API instead of hardcoded list
+- Added icons for generate_image (ImageIcon) and spawn_agent (Bot)
+- Added descriptions for new tools
+- Added max-height with scroll for the tool menu
+- Sort tools: enabled first, then alphabetically
+- Enable All now enables all tools from API
+- Updated DEFAULT_ENABLED_TOOLS to include generate_image
+- agent_system.py: Added generate_image to default enabled tools
 
-To enable auto-start, set SD_WEBUI_PATH in your .env file.
-To see the new generate_image tool, call POST /api/tools/refresh
-or restart the backend.
+Now all 8 tools appear in the Tools menu:
+- Web Search
+- YouTube Search
+- Generate Image (NEW)
+- Document Search
+- Memory Recall
+- Memory Store
+- Calculator
+- Spawn Agent

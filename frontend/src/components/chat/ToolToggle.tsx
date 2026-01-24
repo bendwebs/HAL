@@ -5,7 +5,7 @@ import { Chat, Tool } from '@/types';
 import { tools as toolsApi, chats as chatsApi } from '@/lib/api';
 import { 
   Wrench, ChevronDown, Check, Globe, FileSearch,
-  Brain, Calculator, Save, Youtube
+  Brain, Calculator, Save, Youtube, ImageIcon, Bot
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -21,6 +21,8 @@ const TOOL_ICONS: Record<string, any> = {
   memory_recall: Brain,
   memory_store: Save,
   calculator: Calculator,
+  generate_image: ImageIcon,
+  spawn_agent: Bot,
 };
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -30,15 +32,26 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   memory_recall: 'Remember things about you',
   memory_store: 'Save new info about you',
   calculator: 'Perform calculations',
+  generate_image: 'Generate AI images with Stable Diffusion',
+  spawn_agent: 'Create sub-agents for complex tasks',
 };
 
-const DEFAULT_TOOLS = ['web_search', 'youtube_search', 'document_search', 'memory_recall', 'memory_store', 'calculator'];
+// Tools that are enabled by default for new chats
+const DEFAULT_ENABLED_TOOLS = [
+  'web_search', 
+  'youtube_search', 
+  'document_search', 
+  'memory_recall', 
+  'memory_store', 
+  'calculator',
+  'generate_image'
+];
 
 export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [tools, setTools] = useState<Tool[]>([]);
   const [enabledTools, setEnabledTools] = useState<string[]>(
-    chat.enabled_tools ?? DEFAULT_TOOLS
+    chat.enabled_tools ?? DEFAULT_ENABLED_TOOLS
   );
 
   useEffect(() => {
@@ -46,7 +59,7 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
   }, []);
 
   useEffect(() => {
-    setEnabledTools(chat.enabled_tools ?? DEFAULT_TOOLS);
+    setEnabledTools(chat.enabled_tools ?? DEFAULT_ENABLED_TOOLS);
   }, [chat.enabled_tools]);
 
   const loadTools = async () => {
@@ -77,9 +90,39 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
     }
   };
 
+  const enableAll = async () => {
+    const allToolNames = tools.map(t => t.name);
+    setEnabledTools(allToolNames);
+    try {
+      const updated = await chatsApi.update(chat.id, { enabled_tools: allToolNames });
+      onUpdate(updated);
+    } catch (err) {
+      toast.error('Failed to update tools');
+    }
+  };
+
+  const disableAll = async () => {
+    setEnabledTools([]);
+    try {
+      const updated = await chatsApi.update(chat.id, { enabled_tools: [] });
+      onUpdate(updated);
+    } catch (err) {
+      toast.error('Failed to update tools');
+    }
+  };
+
   const enabledCount = enabledTools.length;
-  const totalCount = tools.length || DEFAULT_TOOLS.length;
+  const totalCount = tools.length || DEFAULT_ENABLED_TOOLS.length;
   const disabledCount = totalCount - enabledCount;
+
+  // Sort tools: enabled first, then alphabetically
+  const sortedTools = [...tools].sort((a, b) => {
+    const aEnabled = enabledTools.includes(a.name);
+    const bEnabled = enabledTools.includes(b.name);
+    if (aEnabled && !bEnabled) return -1;
+    if (!aEnabled && bEnabled) return 1;
+    return a.display_name.localeCompare(b.display_name);
+  });
 
   return (
     <div className="relative">
@@ -106,31 +149,29 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
             onClick={() => setShowMenu(false)}
           />
           {/* Menu opens upward from the toolbar */}
-          <div className="absolute left-0 bottom-full mb-2 w-72 bg-bg-elevated border border-border rounded-lg shadow-lg z-50 py-2">
+          <div className="absolute left-0 bottom-full mb-2 w-72 bg-bg-elevated border border-border rounded-lg shadow-lg z-50 py-2 max-h-96 overflow-y-auto">
             <div className="px-3 pb-2 mb-2 border-b border-border">
               <h3 className="font-medium text-text-primary text-sm">Tools</h3>
               <p className="text-xs text-text-muted">Toggle which tools HAL can use</p>
             </div>
             
-            {DEFAULT_TOOLS.map(toolName => {
-              const tool = tools.find(t => t.name === toolName);
-              const Icon = TOOL_ICONS[toolName] || Wrench;
-              const isEnabled = enabledTools.includes(toolName);
-              const displayName = tool?.display_name || toolName.replace(/_/g, ' ');
-              const description = TOOL_DESCRIPTIONS[toolName] || '';
+            {sortedTools.map(tool => {
+              const Icon = TOOL_ICONS[tool.name] || Wrench;
+              const isEnabled = enabledTools.includes(tool.name);
+              const description = TOOL_DESCRIPTIONS[tool.name] || tool.description || '';
               
               return (
                 <button
-                  key={toolName}
-                  onClick={() => toggleTool(toolName)}
+                  key={tool.name}
+                  onClick={() => toggleTool(tool.name)}
                   className="w-full px-3 py-2 flex items-center gap-3 hover:bg-surface transition-colors"
                 >
                   <div className={`p-1.5 rounded ${isEnabled ? 'bg-accent/10 text-accent' : 'bg-surface text-text-muted'}`}>
                     <Icon className="w-4 h-4" />
                   </div>
                   <div className="flex-1 text-left min-w-0">
-                    <p className={`text-sm capitalize ${isEnabled ? 'text-text-primary' : 'text-text-muted line-through'}`}>
-                      {displayName}
+                    <p className={`text-sm ${isEnabled ? 'text-text-primary' : 'text-text-muted line-through'}`}>
+                      {tool.display_name}
                     </p>
                     <p className="text-xs text-text-muted truncate">
                       {description}
@@ -145,21 +186,21 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
               );
             })}
             
+            {tools.length === 0 && (
+              <div className="px-3 py-4 text-center text-text-muted text-sm">
+                Loading tools...
+              </div>
+            )}
+            
             <div className="px-3 pt-2 mt-2 border-t border-border flex gap-2">
               <button
-                onClick={() => {
-                  setEnabledTools(DEFAULT_TOOLS);
-                  chatsApi.update(chat.id, { enabled_tools: DEFAULT_TOOLS }).then(onUpdate);
-                }}
+                onClick={enableAll}
                 className="flex-1 text-xs text-text-secondary hover:text-text-primary py-1"
               >
                 Enable All
               </button>
               <button
-                onClick={() => {
-                  setEnabledTools([]);
-                  chatsApi.update(chat.id, { enabled_tools: [] }).then(onUpdate);
-                }}
+                onClick={disableAll}
                 className="flex-1 text-xs text-text-secondary hover:text-text-primary py-1"
               >
                 Disable All
@@ -169,7 +210,7 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
             {disabledCount > 0 && (
               <div className="px-3 pt-2 mt-2 border-t border-border">
                 <p className="text-xs text-amber-400">
-                  ⚠️ {disabledCount} tool{disabledCount > 1 ? 's' : ''} disabled - HAL will let you know when it can't help due to disabled tools
+                  ⚠️ {disabledCount} tool{disabledCount > 1 ? 's' : ''} disabled
                 </p>
               </div>
             )}
