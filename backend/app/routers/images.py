@@ -7,6 +7,7 @@ from typing import Dict, Any
 
 from app.auth import get_current_user
 from app.services.stable_diffusion_service import get_stable_diffusion_service
+from app.services.sd_process_manager import get_sd_process_manager
 from app.config import settings
 
 router = APIRouter(prefix="/images", tags=["Images"])
@@ -36,14 +37,21 @@ async def get_generated_image(filename: str):
 async def stable_diffusion_status(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Check Stable Diffusion API status"""
+    """Check Stable Diffusion API and process status"""
     sd = get_stable_diffusion_service()
+    manager = get_sd_process_manager()
+    
     available = await sd.check_availability()
+    process_status = await manager.get_status()
     
     result = {
         "available": available,
         "api_url": sd.api_url,
-        "message": "Stable Diffusion API is ready" if available else "Stable Diffusion API is not available"
+        "message": "Stable Diffusion API is ready" if available else "Stable Diffusion API is not available",
+        "auto_start_configured": process_status["configured"],
+        "sd_path": process_status["sd_path"],
+        "subprocess_running": process_status["subprocess_running"],
+        "starting": process_status["starting"]
     }
     
     if available:
@@ -57,6 +65,24 @@ async def stable_diffusion_status(
             result["samplers"] = samplers_result["samplers"]
     
     return result
+
+
+@router.post("/sd/start")
+async def start_stable_diffusion(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Start Stable Diffusion server (if path configured)"""
+    manager = get_sd_process_manager()
+    return await manager.start()
+
+
+@router.post("/sd/stop")
+async def stop_stable_diffusion(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Stop Stable Diffusion server subprocess"""
+    manager = get_sd_process_manager()
+    return await manager.stop()
 
 
 @router.get("/sd/models")

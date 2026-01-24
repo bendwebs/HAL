@@ -1,31 +1,28 @@
-feat: add Stable Diffusion image generation tool (generate_image)
+feat: add SD auto-start subprocess manager and tool refresh endpoint
 
-Adds a new tool that allows the LLM to generate images using a local
-Stable Diffusion API (Automatic1111, SD.Next, or ComfyUI with API).
+Stable Diffusion Auto-Start:
+- New sd_process_manager.py handles starting SD as a subprocess
+- Starts SD headless with --api --nowebui flags
+- Auto-starts when generate_image tool is used (if SD_WEBUI_PATH configured)
+- Waits for API to become ready before proceeding
+- Supports both Windows (webui-user.bat) and Linux (webui.sh)
 
-Backend changes:
-- New stable_diffusion_service.py with txt2img and img2img support
-- New images router for serving generated images and SD status
-- Added generate_image to tool definitions in tool_executor.py
-- Added generate_image tool execution in agent_system.py
-- Added SD config options to config.py and .env.example
+New Config Options:
+- SD_WEBUI_PATH: Path to Automatic1111 webui folder
+- SD_STARTUP_TIMEOUT: Seconds to wait for SD to start (default 120)
 
-Frontend changes:
-- New GeneratedImage.tsx component with:
-  - Image display with hover controls
-  - Fullscreen modal view
-  - Download functionality
-  - Generation details toggle (prompt, size, steps, seed)
-- Updated ChatMessage.tsx to render generated images inline
-- Images displayed similar to YouTube results (replaces text response)
+New API Endpoints:
+- POST /api/images/sd/start - Manually start SD server
+- POST /api/images/sd/stop - Stop SD server subprocess
+- POST /api/tools/refresh - Refresh tool definitions from code
 
-Configuration:
-- SD_API_URL (default: http://127.0.0.1:7860)
-- SD_DEFAULT_STEPS (default: 20)
-- SD_DEFAULT_CFG (default: 7.0)
-- SD_DEFAULT_SAMPLER (default: DPM++ 2M Karras)
+Changes:
+- stable_diffusion_service.py: Added ensure_running() method
+- generate_image() now auto-starts SD if path is configured
+- images.py: Added start/stop endpoints and process status
+- tools.py: Added refresh endpoint to sync new tools to DB
+- Updated .env.example with auto-start documentation
 
-Usage:
-1. Start Automatic1111 with --api flag
-2. Enable generate_image tool in chat
-3. Ask HAL to "create an image of..." or "generate a picture of..."
+To enable auto-start, set SD_WEBUI_PATH in your .env file.
+To see the new generate_image tool, call POST /api/tools/refresh
+or restart the backend.

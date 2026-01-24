@@ -343,13 +343,6 @@ class AgentSystem:
             elif tool_name == "generate_image":
                 sd = get_stable_diffusion_service()
                 
-                # Check availability
-                if not await sd.check_availability():
-                    return {
-                        "success": False, 
-                        "error": "Stable Diffusion is not available. Make sure Automatic1111 is running with --api flag at http://127.0.0.1:7860"
-                    }
-                
                 prompt = parameters.get("prompt", "")
                 if not prompt:
                     return {"success": False, "error": "No prompt provided for image generation"}
@@ -362,6 +355,7 @@ class AgentSystem:
                 
                 logger.info(f"[GENERATE_IMAGE] Generating image: {prompt[:100]}...")
                 
+                # generate_image now handles ensure_running internally
                 result = await sd.generate_image(
                     prompt=prompt,
                     negative_prompt=negative_prompt,

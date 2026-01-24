@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     sd_default_steps: int = 20
     sd_default_cfg: float = 7.0
     sd_default_sampler: str = "DPM++ 2M Karras"
+    sd_webui_path: Optional[str] = None  # Path to Automatic1111 webui folder
+    sd_startup_timeout: int = 120  # Seconds to wait for SD to start
     
     # Server
     api_prefix: str = "/api"

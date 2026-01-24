@@ -94,3 +94,16 @@ async def toggle_tool(
     )
     
     return {"message": "Tool preference updated", "enabled": request.enabled}
+
+
+@router.post("/refresh")
+async def refresh_tools(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Refresh tool definitions from code (adds new tools, updates existing)"""
+    from app.services.tool_executor import get_tool_executor
+    
+    tool_executor = get_tool_executor()
+    await tool_executor.initialize_tools_in_db()
+    
+    return {"message": "Tools refreshed successfully"}

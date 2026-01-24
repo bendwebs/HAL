@@ -42,6 +42,30 @@ class StableDiffusionService:
             self._available = False
             return False
     
+    async def ensure_running(self) -> Dict[str, Any]:
+        """Ensure SD is running, starting it if necessary"""
+        # First check if already available
+        if await self.check_availability():
+            return {"success": True, "message": "Stable Diffusion is ready"}
+        
+        # Try to start it
+        from app.services.sd_process_manager import get_sd_process_manager
+        manager = get_sd_process_manager()
+        
+        if not manager.is_configured:
+            return {
+                "success": False,
+                "error": "Stable Diffusion path not configured. Set SD_WEBUI_PATH in .env to enable auto-start."
+            }
+        
+        logger.info("Starting Stable Diffusion automatically...")
+        result = await manager.start()
+        
+        if result.get("success"):
+            self._available = True
+        
+        return result
+    
     async def get_models(self) -> Dict[str, Any]:
         """Get list of available SD models/checkpoints"""
         try:
@@ -101,12 +125,10 @@ class StableDiffusionService:
         Returns:
             Dict with success status, image data, and metadata
         """
-        # Check availability first
-        if not await self.check_availability():
-            return {
-                "success": False,
-                "error": "Stable Diffusion API is not available. Make sure Automatic1111 is running with --api flag."
-            }
+        # Ensure SD is running (will auto-start if configured)
+        ensure_result = await self.ensure_running()
+        if not ensure_result.get("success"):
+            return ensure_result
         
         payload = {
             "prompt": prompt,
