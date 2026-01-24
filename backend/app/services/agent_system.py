@@ -512,6 +512,11 @@ class AgentSystem:
             'video', 'youtube', 'watch', 'show me', 'find me', 'play'
         ]) and 'youtube_search' in (enabled_tools or [])
         
+        # Check if this looks like an image generation request
+        is_image_request = any(phrase in message_lower for phrase in [
+            'generate', 'create', 'make', 'draw', 'image', 'picture', 'photo', 'artwork', 'illustration'
+        ]) and 'generate_image' in (enabled_tools or [])
+        
         # First call - with tools to see if model wants to use any
         tool_calls_to_execute = []
         first_response_content = ""
@@ -563,6 +568,34 @@ class AgentSystem:
                     tool_calls_to_execute = retry_msg["tool_calls"]
                     first_response_content = retry_msg.get("content", "")
                     logger.info(f"[YOUTUBE RETRY] Success! Tool calls: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
+            
+            # If user asked for image generation but model didn't call generate_image, retry with a hint
+            elif is_image_request and not tool_calls_to_execute:
+                logger.info(f"[IMAGE RETRY] User asked for image but model didn't call tool, retrying with hint")
+                
+                # Add a hint message and retry
+                retry_messages = messages.copy()
+                retry_messages.append({
+                    "role": "assistant", 
+                    "content": "I need to use the generate_image tool to create this image for you."
+                })
+                retry_messages.append({
+                    "role": "user",
+                    "content": "Yes, please use the generate_image tool to generate the image."
+                })
+                
+                retry_response = await ollama.chat(
+                    model=model,
+                    messages=retry_messages,
+                    system=system_prompt,
+                    tools=tools
+                )
+                
+                retry_msg = retry_response.get("message", {})
+                if retry_msg.get("tool_calls"):
+                    tool_calls_to_execute = retry_msg["tool_calls"]
+                    first_response_content = retry_msg.get("content", "")
+                    logger.info(f"[IMAGE RETRY] Success! Tool calls: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
         except Exception as e:
             logger.error(f"First LLM call failed: {e}")
             yield {"type": "error", "data": {"message": str(e)}}

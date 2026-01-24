@@ -1,1 +1,7 @@
-strengthen generate_image tool description
+fix: add retry logic when model fails to call generate_image tool
+
+The qwen2.5:7b model sometimes hallucinates that it generated an
+image without actually calling the tool. This adds a retry mechanism
+similar to the one for youtube_search - if the user's message looks
+like an image request but the model doesn't call the tool, we retry
+with a hint to force tool usage.
