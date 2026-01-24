@@ -37,17 +37,14 @@ class StableDiffusionService:
     
     def _curl_get(self, url: str, timeout: int = 10) -> Optional[dict]:
         """Make a GET request using curl subprocess"""
-        import subprocess
-        import json as json_module
         try:
             result = subprocess.run(
                 ['curl', '-s', '-X', 'GET', url, '--max-time', str(timeout)],
                 capture_output=True,
-                text=True,
                 timeout=timeout + 5
             )
             if result.returncode == 0 and result.stdout:
-                return json_module.loads(result.stdout)
+                return json.loads(result.stdout.decode('utf-8'))
             return None
         except Exception:
             return None
@@ -180,15 +177,12 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            import subprocess
-            import json as json_module
-            
             # Use curl subprocess - proven to work reliably with SD
-            curl_payload = json_module.dumps(payload)
+            curl_payload = json.dumps(payload)
             
             logger.info(f"Sending txt2img request via curl to {self.api_url}/sdapi/v1/txt2img...")
             
-            # Run curl synchronously in subprocess
+            # Run curl synchronously in subprocess (binary mode to handle base64 output)
             result_proc = subprocess.run(
                 [
                     'curl', '-s', '-X', 'POST',
@@ -198,12 +192,11 @@ class StableDiffusionService:
                     '--max-time', '300'
                 ],
                 capture_output=True,
-                text=True,
                 timeout=310
             )
             
             if result_proc.returncode != 0:
-                error_msg = result_proc.stderr or f"curl failed with code {result_proc.returncode}"
+                error_msg = result_proc.stderr.decode('utf-8', errors='replace') if result_proc.stderr else f"curl failed with code {result_proc.returncode}"
                 logger.error(f"curl failed: {error_msg}")
                 return {"success": False, "error": error_msg}
             
@@ -211,7 +204,7 @@ class StableDiffusionService:
                 logger.error("curl returned empty response")
                 return {"success": False, "error": "Empty response from SD"}
             
-            result = json_module.loads(result_proc.stdout)
+            result = json.loads(result_proc.stdout.decode('utf-8'))
             logger.info(f"txt2img response received successfully")
             
             images = result.get("images", [])

@@ -1,10 +1,4 @@
-fix: use curl subprocess for ALL SD API calls
+fix: use binary mode for curl subprocess to handle base64 output
 
-Since manual curl commands work reliably with SD but Python HTTP
-libraries (httpx, aiohttp, requests) all cause hangs after the
-first request, switch entirely to curl subprocess calls.
-
-- Added _curl_get helper method for GET requests
-- Converted check_availability, get_progress, get_models, get_samplers
-- Converted generate_image to use synchronous subprocess.run
-- Removed requests import
+Windows was failing to decode the base64 image data as cp1252 text.
+Switch to binary mode and decode as UTF-8 explicitly.
