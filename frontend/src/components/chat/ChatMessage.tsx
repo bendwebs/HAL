@@ -74,11 +74,24 @@ export default function ChatMessage({
   
   // Check if this message has a generated image result
   const hasGeneratedImageResult = message.actions?.some(
-    action => action.name === 'generate_image' && 
-    action.result && 
-    typeof action.result === 'object' &&
-    'type' in action.result &&
-    action.result.type === 'generated_image'
+    action => {
+      const isMatch = action.name === 'generate_image' && 
+        action.result && 
+        typeof action.result === 'object' &&
+        'type' in action.result &&
+        action.result.type === 'generated_image';
+      
+      if (action.name === 'generate_image') {
+        console.log('[ChatMessage] Checking generate_image action:', {
+          hasResult: !!action.result,
+          resultType: typeof action.result,
+          resultTypeField: (action.result as any)?.type,
+          isMatch,
+          status: action.status
+        });
+      }
+      return isMatch;
+    }
   );
   
   // YouTube and image results should always be shown, even if showActions is false

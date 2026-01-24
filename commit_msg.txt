@@ -1,7 +1,1 @@
-fix: tell LLM not to render image, add frontend debug logging
-
-1. Updated LLM tool result message to explicitly tell the LLM
-   not to try to display the image with markdown - the UI handles it
-
-2. Added console logging to ActionItem component to debug why
-   generated images aren't rendering during streaming
+add more debug logging for image result detection
