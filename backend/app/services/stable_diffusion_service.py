@@ -48,6 +48,18 @@ class StableDiffusionService:
             self._available = False
             return False
     
+    async def get_progress(self) -> Dict[str, Any]:
+        """Check current generation progress"""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{self.api_url}/sdapi/v1/progress")
+                if response.status_code == 200:
+                    return response.json()
+                return {"state": {"job_count": 0}}
+        except Exception as e:
+            logger.warning(f"Failed to get progress: {e}")
+            return {"state": {"job_count": 0}}
+    
     async def ensure_running(self) -> Dict[str, Any]:
         """Ensure SD is running, starting it if necessary"""
         if await self.check_availability():
@@ -154,7 +166,14 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:  # 3 min timeout for slow generations
+            # Use explicit timeout configuration
+            timeout = httpx.Timeout(
+                connect=30.0,      # 30s to connect
+                read=300.0,        # 5 min to read response (for slow generations)
+                write=30.0,        # 30s to write request
+                pool=30.0          # 30s to acquire connection from pool
+            )
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
                 response = await client.post(
                     f"{self.api_url}/sdapi/v1/txt2img",

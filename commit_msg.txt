@@ -1,4 +1,5 @@
-fix: remove --nowebui flag that was preventing SD startup
+fix: improve SD generation timeout and add progress check
 
-Some SD versions don't support --nowebui properly. Using only --api
-flag which enables the API while still running the web UI.
+- Use explicit httpx.Timeout with separate connect/read/write timeouts
+- Increased read timeout to 5 minutes for slow generations
+- Added get_progress() method to check SD generation status
