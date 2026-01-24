@@ -619,11 +619,11 @@ class AgentSystem:
             # Notify completion
             status = "complete" if result.get("success") else "failed"
             
-            # For structured results (like youtube_results), pass the entire result object
+            # For structured results (like youtube_results, generated_image), pass the entire result object
             # For simple results, extract just the result/error string
-            if result.get("type") == "youtube_results":
-                result_data = result  # Pass full structured data for YouTube
-                logger.info(f"[YOUTUBE] Yielding action_complete with full result data, videos={len(result.get('videos', []))}")
+            if result.get("type") in ["youtube_results", "generated_image"]:
+                result_data = result  # Pass full structured data
+                logger.info(f"[{tool_name.upper()}] Yielding action_complete with full result data")
             else:
                 result_data = result.get("result") or result.get("error")
             

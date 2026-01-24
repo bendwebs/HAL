@@ -1,11 +1,8 @@
-fix: pass --api as command line argument instead of env var
+fix: pass full generated_image result to frontend
 
-The COMMANDLINE_ARGS environment variable is only used for logging,
-not for actually passing arguments. webui.bat uses %* to pass args
-to launch.py.
+The action_complete handler was only passing full structured data
+for youtube_results, but extracting just result.get("result") for
+other tools - which doesn't exist for generated_image.
 
-Updated run_api.bat to:
-- Call webui.bat --api (passes --api through to launch.py)
-- Removed --nowebui since --api alone enables the API alongside UI
-
-This should properly enable the SD API endpoint.
+Now both youtube_results and generated_image types pass their full
+result object to the frontend, allowing proper image rendering.
