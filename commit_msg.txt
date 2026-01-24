@@ -1,4 +1,1 @@
-fix: use binary mode for curl subprocess to handle base64 output
-
-Windows was failing to decode the base64 image data as cp1252 text.
-Switch to binary mode and decode as UTF-8 explicitly.
+fix: remove duplicate json import that shadowed module-level import

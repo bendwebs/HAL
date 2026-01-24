@@ -240,7 +240,6 @@ class StableDiffusionService:
             # Get generation info
             info = result.get("info", "{}")
             if isinstance(info, str):
-                import json
                 try:
                     info = json.loads(info)
                 except:
