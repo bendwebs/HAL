@@ -21,7 +21,7 @@ class SDProcessManager:
         self.process: Optional[subprocess.Popen] = None
         self.sd_path = getattr(settings, 'sd_webui_path', None)
         self.api_url = getattr(settings, 'sd_api_url', 'http://127.0.0.1:7860')
-        self.startup_timeout = getattr(settings, 'sd_startup_timeout', 180)  # seconds
+        self.startup_timeout = getattr(settings, 'sd_startup_timeout', 180)
         self._starting = False
         self._lock = asyncio.Lock()
     
@@ -31,11 +31,11 @@ class SDProcessManager:
         if not self.sd_path:
             return False
         sd_path = Path(self.sd_path)
-        # Check for either run.bat (portable) or webui folder
         return sd_path.exists() and (
             (sd_path / 'run.bat').exists() or 
             (sd_path / 'webui-user.bat').exists() or
-            (sd_path / 'webui' / 'webui-user.bat').exists()
+            (sd_path / 'webui' / 'webui-user.bat').exists() or
+            (sd_path / 'webui.sh').exists()
         )
     
     @property
@@ -52,41 +52,54 @@ class SDProcessManager:
         except:
             return False
     
-    def _find_launch_script(self, sd_path: Path) -> tuple[Optional[Path], list[str]]:
-        """Find the appropriate launch script and return (script_path, extra_args)"""
+    def _create_api_launcher(self, sd_path: Path) -> Optional[Path]:
+        """Create a launcher script that starts SD with --api flag"""
         
-        # Option 1: Portable install with run.bat at root
+        # Check for portable install (has run.bat and environment.bat)
         run_bat = sd_path / 'run.bat'
-        if run_bat.exists():
-            logger.info(f"Found portable SD install with run.bat")
-            return run_bat, ['--api', '--nowebui']
+        env_bat = sd_path / 'environment.bat'
+        webui_dir = sd_path / 'webui'
         
-        # Option 2: webui-user.bat at root (standard install)
+        if run_bat.exists() and env_bat.exists() and webui_dir.exists():
+            # Portable install - create API launcher
+            launcher_path = sd_path / 'run_api.bat'
+            
+            launcher_content = f'''@echo off
+call "{env_bat}"
+cd /d "{webui_dir}"
+set COMMANDLINE_ARGS=--api --nowebui
+call webui.bat
+'''
+            logger.info(f"Creating API launcher at {launcher_path}")
+            with open(launcher_path, 'w') as f:
+                f.write(launcher_content)
+            
+            return launcher_path
+        
+        # Standard install with webui-user.bat at root
         webui_user = sd_path / 'webui-user.bat'
         if webui_user.exists():
-            logger.info(f"Found standard SD install with webui-user.bat")
-            return webui_user, ['--api', '--nowebui']
+            launcher_path = sd_path / 'webui-api.bat'
+            
+            launcher_content = f'''@echo off
+set COMMANDLINE_ARGS=--api --nowebui
+call "{webui_user}"
+'''
+            logger.info(f"Creating API launcher at {launcher_path}")
+            with open(launcher_path, 'w') as f:
+                f.write(launcher_content)
+            
+            return launcher_path
         
-        # Option 3: webui-user.bat in webui subfolder
-        webui_user_sub = sd_path / 'webui' / 'webui-user.bat'
-        if webui_user_sub.exists():
-            logger.info(f"Found SD install with webui subfolder")
-            return webui_user_sub, ['--api', '--nowebui']
-        
-        # Option 4: Linux - webui.sh
+        # Linux
         webui_sh = sd_path / 'webui.sh'
         if webui_sh.exists():
-            logger.info(f"Found Linux SD install with webui.sh")
-            return webui_sh, ['--api', '--nowebui']
+            return webui_sh  # We'll pass args directly
         
-        return None, []
+        return None
     
     async def start(self) -> Dict[str, Any]:
-        """
-        Start the Stable Diffusion server.
-        
-        Returns status dict with success/error info.
-        """
+        """Start the Stable Diffusion server."""
         async with self._lock:
             # Check if already running
             if await self.check_api_ready():
@@ -116,48 +129,35 @@ class SDProcessManager:
                     "error": f"SD path does not exist: {sd_path}"
                 }
             
-            # Find launch script
-            launch_script, extra_args = self._find_launch_script(sd_path)
-            
-            if not launch_script:
-                return {
-                    "success": False,
-                    "error": f"Cannot find run.bat, webui-user.bat, or webui.sh in {sd_path}"
-                }
-            
             self._starting = True
             
             try:
-                logger.info(f"Starting Stable Diffusion from {launch_script}")
-                logger.info(f"Extra args: {extra_args}")
+                # Create or find the appropriate launcher
+                launcher = self._create_api_launcher(sd_path)
                 
-                # Determine working directory
-                work_dir = launch_script.parent
+                if not launcher:
+                    self._starting = False
+                    return {
+                        "success": False,
+                        "error": f"Cannot find or create launcher in {sd_path}"
+                    }
+                
+                logger.info(f"Starting Stable Diffusion with: {launcher}")
                 
                 if sys.platform == 'win32':
-                    # On Windows, we need to modify COMMANDLINE_ARGS
-                    # Create a temporary batch file that sets args and calls the original
-                    
-                    # For run.bat, we need to inject args differently
-                    # The cleanest way is to set COMMANDLINE_ARGS environment variable
-                    env = os.environ.copy()
-                    env['COMMANDLINE_ARGS'] = ' '.join(extra_args)
-                    
-                    # Start the process
+                    # Windows - run the batch file
                     self.process = subprocess.Popen(
-                        [str(launch_script)],
-                        cwd=str(work_dir),
-                        env=env,
+                        [str(launcher)],
+                        cwd=str(launcher.parent),
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         creationflags=subprocess.CREATE_NEW_CONSOLE
                     )
                 else:
                     # Linux/Mac
-                    cmd = ['bash', str(launch_script)] + extra_args
                     self.process = subprocess.Popen(
-                        cmd,
-                        cwd=str(work_dir),
+                        ['bash', str(launcher), '--api', '--nowebui'],
+                        cwd=str(launcher.parent),
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT
                     )
@@ -166,7 +166,7 @@ class SDProcessManager:
                 
                 # Wait for API to become ready
                 start_time = asyncio.get_event_loop().time()
-                check_interval = 3  # seconds between checks
+                check_interval = 3
                 
                 while (asyncio.get_event_loop().time() - start_time) < self.startup_timeout:
                     elapsed = int(asyncio.get_event_loop().time() - start_time)
@@ -198,7 +198,7 @@ class SDProcessManager:
                 self._starting = False
                 return {
                     "success": False,
-                    "error": f"Stable Diffusion failed to start within {self.startup_timeout} seconds. It may still be loading - check the SD console window."
+                    "error": f"Stable Diffusion failed to start within {self.startup_timeout}s. Check the SD console window."
                 }
                 
             except Exception as e:
@@ -220,7 +220,6 @@ class SDProcessManager:
         try:
             self.process.terminate()
             
-            # Wait for graceful shutdown
             try:
                 self.process.wait(timeout=10)
             except subprocess.TimeoutExpired:

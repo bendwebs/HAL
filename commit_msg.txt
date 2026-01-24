@@ -1,18 +1,13 @@
-fix: support portable SD install with run.bat and add config
+fix: create dedicated API launcher script for SD
 
-Updated sd_process_manager.py to handle various SD installation types:
-- Portable installs with run.bat at root (like sd.webui packages)
-- Standard installs with webui-user.bat
-- Installs with webui subfolder
-- Linux installs with webui.sh
+The previous approach of setting COMMANDLINE_ARGS via environment
+variable didn't work because webui-user.bat explicitly resets it.
 
-Key changes:
-- _find_launch_script() detects installation type
-- Sets COMMANDLINE_ARGS env var for --api --nowebui flags
-- Better logging during startup wait
-- Increased default timeout to 180s (SD can be slow to load)
+New approach: Create a dedicated launcher script (run_api.bat) that:
+1. Calls environment.bat to set up paths
+2. Sets COMMANDLINE_ARGS=--api --nowebui BEFORE calling webui.bat
+3. This ensures the API flag is properly passed
 
-Added to .env:
-- SD_WEBUI_PATH=E:\Stable_diffusion\sd.webui-1.10.1-blackwell
-- SD_API_URL=http://127.0.0.1:7860
-- SD_STARTUP_TIMEOUT=180
+The launcher is created automatically in the SD directory on first use.
+For portable installs: creates run_api.bat
+For standard installs: creates webui-api.bat
