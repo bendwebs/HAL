@@ -211,12 +211,20 @@ export const messages = {
     
     if (!reader) return;
     
+    let buffer = '';  // Buffer for incomplete lines
+    
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
+      // Append new data to buffer
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Process complete lines
+      const lines = buffer.split('\n');
+      
+      // Keep the last line in buffer if it's incomplete (doesn't end with newline)
+      buffer = lines.pop() || '';
       
       for (const line of lines) {
         if (line.startsWith('data: ')) {
@@ -227,8 +235,23 @@ export const messages = {
               console.log('[API Stream] action_complete received:', data);
             }
             yield data;
-          } catch {}
+          } catch (e) {
+            console.warn('[API Stream] Failed to parse SSE line:', line.slice(0, 100), e);
+          }
         }
+      }
+    }
+    
+    // Process any remaining data in buffer
+    if (buffer.startsWith('data: ')) {
+      try {
+        const data = JSON.parse(buffer.slice(6));
+        if (data.type === 'action_complete') {
+          console.log('[API Stream] action_complete received (final):', data);
+        }
+        yield data;
+      } catch (e) {
+        console.warn('[API Stream] Failed to parse final SSE data:', buffer.slice(0, 100), e);
       }
     }
   },

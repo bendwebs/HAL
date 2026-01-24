@@ -1,1 +1,8 @@
-debug: add SSE action_complete logging
+fix: properly buffer SSE stream to handle chunked data
+
+The action_complete event with image data could be split across
+multiple reader.read() calls due to its size. The previous parser
+would fail to parse partial lines.
+
+Now we properly buffer incomplete lines and process them when
+complete data arrives.
