@@ -1,7 +1,23 @@
-fix: add retry logic when model fails to call generate_image tool
+feat: add standalone image generation page
 
-The qwen2.5:7b model sometimes hallucinates that it generated an
-image without actually calling the tool. This adds a retry mechanism
-similar to the one for youtube_search - if the user's message looks
-like an image request but the model doesn't call the tool, we retry
-with a hint to force tool usage.
+Creates a new /generate page for Stable Diffusion image generation,
+separate from the chat system. Features include:
+
+- Direct prompt input without LLM middleman
+- Advanced settings (dimensions, steps, CFG scale, sampler, seed)
+- Dimension presets for common sizes
+- Batch generation (1-4 images)
+- SD status display with start/stop controls
+- Image gallery showing all generated images
+- Lightbox view for full-size images
+- Download and delete functionality
+- Responsive layout for desktop and mobile
+
+Backend changes:
+- Added POST /api/images/generate endpoint
+- Added Pydantic models for request/response validation
+
+Frontend changes:
+- Added imageGen API functions
+- Added Generate link to sidebar and mobile nav
+- Created full-featured generation page

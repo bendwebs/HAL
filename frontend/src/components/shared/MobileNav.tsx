@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth';
 import { cn } from '@/lib/utils';
-import { MessageSquare, FolderOpen, Brain, User, Shield, Mic } from 'lucide-react';
+import { MessageSquare, FolderOpen, Brain, User, Shield, Mic, ImageIcon } from 'lucide-react';
 
 export default function MobileNav() {
   const pathname = usePathname();
@@ -14,9 +14,9 @@ export default function MobileNav() {
   const items = [
     { href: '/chat', icon: MessageSquare, label: 'Chat' },
     { href: '/converse', icon: Mic, label: 'Voice' },
+    { href: '/generate', icon: ImageIcon, label: 'Image' },
     { href: '/library', icon: FolderOpen, label: 'Library' },
     { href: '/memories', icon: Brain, label: 'Memory' },
-    { href: '/settings', icon: User, label: 'Settings' },
     ...(isAdmin ? [{ href: '/admin', icon: Shield, label: 'Admin' }] : []),
   ];
 

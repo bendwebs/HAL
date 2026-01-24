@@ -680,4 +680,106 @@ export const stt = {
   },
 };
 
+// Image Generation API
+export const imageGen = {
+  /**
+   * Get SD status and available models/samplers
+   */
+  getStatus: () =>
+    request<{
+      available: boolean;
+      api_url: string;
+      message: string;
+      auto_start_configured: boolean;
+      sd_path?: string;
+      subprocess_running: boolean;
+      starting: boolean;
+      models?: string[];
+      samplers?: string[];
+    }>('/api/images/sd/status'),
+
+  /**
+   * Start Stable Diffusion server
+   */
+  start: () =>
+    request<{ success: boolean; message?: string; error?: string }>('/api/images/sd/start', {
+      method: 'POST',
+    }),
+
+  /**
+   * Stop Stable Diffusion server
+   */
+  stop: () =>
+    request<{ success: boolean; message?: string }>('/api/images/sd/stop', {
+      method: 'POST',
+    }),
+
+  /**
+   * Generate an image
+   */
+  generate: (params: {
+    prompt: string;
+    negative_prompt?: string;
+    width?: number;
+    height?: number;
+    steps?: number;
+    cfg_scale?: number;
+    sampler_name?: string;
+    seed?: number;
+    batch_size?: number;
+  }) =>
+    request<{
+      success: boolean;
+      images?: Array<{
+        filename: string;
+        url: string;
+      }>;
+      prompt?: string;
+      negative_prompt?: string;
+      seed?: number;
+      steps?: number;
+      cfg_scale?: number;
+      sampler?: string;
+      width?: number;
+      height?: number;
+      generation_time_ms?: number;
+      error?: string;
+    }>('/api/images/generate', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  /**
+   * List user's generated images
+   */
+  listMyImages: () =>
+    request<{
+      images: Array<{
+        filename: string;
+        url: string;
+        created_at: number;
+      }>;
+    }>('/api/images/my-images'),
+
+  /**
+   * Delete a generated image
+   */
+  deleteImage: (filename: string) =>
+    request<{ message: string; filename: string }>(`/api/images/generated/${filename}`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Get available models
+   */
+  getModels: () =>
+    request<{ success: boolean; models?: string[]; error?: string }>('/api/images/sd/models'),
+
+  /**
+   * Get available samplers
+   */
+  getSamplers: () =>
+    request<{ success: boolean; samplers?: string[]; error?: string }>('/api/images/sd/samplers'),
+};
+
 export { ApiError };

@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 
 from app.auth import get_current_user
 from app.services.stable_diffusion_service import get_stable_diffusion_service
@@ -11,6 +12,69 @@ from app.services.sd_process_manager import get_sd_process_manager
 from app.config import settings
 
 router = APIRouter(prefix="/images", tags=["Images"])
+
+
+class GenerateImageRequest(BaseModel):
+    """Request model for image generation"""
+    prompt: str = Field(..., description="The image generation prompt")
+    negative_prompt: str = Field(default="", description="Things to avoid in the image")
+    width: int = Field(default=512, ge=256, le=2048, description="Image width")
+    height: int = Field(default=512, ge=256, le=2048, description="Image height")
+    steps: int = Field(default=20, ge=1, le=150, description="Number of sampling steps")
+    cfg_scale: float = Field(default=7.0, ge=1.0, le=30.0, description="CFG scale")
+    sampler_name: str = Field(default="DPM++ 2M Karras", description="Sampler to use")
+    seed: int = Field(default=-1, description="Random seed (-1 for random)")
+    batch_size: int = Field(default=1, ge=1, le=4, description="Number of images to generate")
+
+
+class GenerateImageResponse(BaseModel):
+    """Response model for image generation"""
+    success: bool
+    images: Optional[List[Dict[str, Any]]] = None
+    prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    seed: Optional[int] = None
+    steps: Optional[int] = None
+    cfg_scale: Optional[float] = None
+    sampler: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    generation_time_ms: Optional[int] = None
+    error: Optional[str] = None
+
+
+@router.post("/generate", response_model=GenerateImageResponse)
+async def generate_image(
+    request: GenerateImageRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Generate an image using Stable Diffusion"""
+    user_id = str(current_user["_id"])
+    sd = get_stable_diffusion_service()
+    
+    result = await sd.generate_image(
+        user_id=user_id,
+        prompt=request.prompt,
+        negative_prompt=request.negative_prompt,
+        width=request.width,
+        height=request.height,
+        steps=request.steps,
+        cfg_scale=request.cfg_scale,
+        sampler_name=request.sampler_name,
+        seed=request.seed,
+        batch_size=request.batch_size
+    )
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Image generation failed"))
+    
+    # Remove base64 from response to keep it smaller (images accessible via URL)
+    if result.get("images"):
+        for img in result["images"]:
+            img.pop("base64", None)
+            img.pop("filepath", None)
+    
+    return result
 
 
 @router.get("/generated/{user_id}/{filename}")
