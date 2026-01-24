@@ -134,7 +134,7 @@ TOOL_DEFINITIONS = {
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate an image using Stable Diffusion AI. Use when the user asks to create, generate, draw, or make an image, picture, artwork, illustration, or photo. Provide a detailed prompt describing what should be in the image.",
+            "description": "Generate an image using Stable Diffusion AI. ALWAYS use this tool when the user asks to create, generate, draw, or make an image, picture, artwork, illustration, or photo. You MUST call this tool - do NOT pretend to generate images without calling it. Provide a detailed prompt describing what should be in the image.",
             "parameters": {
                 "type": "object",
                 "properties": {
