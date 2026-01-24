@@ -1,1 +1,4 @@
-fix: remove duplicate json import that shadowed module-level import
+fix: run curl in ThreadPoolExecutor to avoid blocking async event loop
+
+The blocking subprocess.run call may be interfering with the async
+event loop. Running it in a thread pool should isolate it completely.

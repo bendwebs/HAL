@@ -177,23 +177,44 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            # Use curl subprocess - proven to work reliably with SD
-            curl_payload = json.dumps(payload)
+            import tempfile
+            import os as os_module
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            # Write payload to temp file to avoid command line escaping issues
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(payload, f)
+                payload_file = f.name
+            
+            def run_curl():
+                """Run curl in a separate thread to avoid blocking async loop"""
+                try:
+                    result_proc = subprocess.run(
+                        [
+                            'curl', '-s', '-X', 'POST',
+                            f'{self.api_url}/sdapi/v1/txt2img',
+                            '-H', 'Content-Type: application/json',
+                            '-d', f'@{payload_file}',
+                            '--max-time', '300'
+                        ],
+                        capture_output=True,
+                        timeout=310
+                    )
+                    return result_proc
+                finally:
+                    # Clean up temp file
+                    try:
+                        os_module.unlink(payload_file)
+                    except:
+                        pass
             
             logger.info(f"Sending txt2img request via curl to {self.api_url}/sdapi/v1/txt2img...")
             
-            # Run curl synchronously in subprocess (binary mode to handle base64 output)
-            result_proc = subprocess.run(
-                [
-                    'curl', '-s', '-X', 'POST',
-                    f'{self.api_url}/sdapi/v1/txt2img',
-                    '-H', 'Content-Type: application/json',
-                    '-d', curl_payload,
-                    '--max-time', '300'
-                ],
-                capture_output=True,
-                timeout=310
-            )
+            # Run curl in thread pool to not block the async event loop
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                result_proc = await loop.run_in_executor(executor, run_curl)
             
             if result_proc.returncode != 0:
                 error_msg = result_proc.stderr.decode('utf-8', errors='replace') if result_proc.stderr else f"curl failed with code {result_proc.returncode}"
