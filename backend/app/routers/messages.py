@@ -8,6 +8,9 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, AsyncGenerator
 import json
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.database import database
 from app.auth import get_current_user
@@ -166,6 +169,7 @@ async def send_message(
                         full_response["content"] += chunk["data"].get("delta", "")
                     elif chunk["type"] == "action_complete":
                         full_response["actions"].append(chunk["data"])
+                        logger.info(f"[SSE] Yielding action_complete for {chunk['data'].get('name')}, status={chunk['data'].get('status')}")
                     elif chunk["type"] == "done":
                         full_response["model_used"] = chunk["data"].get("model")
                         full_response["token_usage"] = chunk["data"].get("token_usage")
