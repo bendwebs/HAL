@@ -1,5 +1,1 @@
-fix: use curl subprocess for SD API requests
-
-Using curl via subprocess completely isolates the HTTP request from
-Python's async event loop and any connection pooling. This is the
-most reliable way to ensure each request is truly independent.
+fix: correct indentation errors in stable_diffusion_service.py

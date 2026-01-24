@@ -199,62 +199,62 @@ class StableDiffusionService:
             
             result = json_module.loads(stdout.decode())
             logger.info(f"txt2img response received successfully")
-                
-                images = result.get("images", [])
-                if not images:
-                    return {
-                        "success": False,
-                        "error": "No images generated"
-                    }
-                
-                # Save images and prepare response
-                saved_images = []
-                for i, img_base64 in enumerate(images):
-                    # Generate unique filename
-                    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                    unique_id = str(uuid.uuid4())[:8]
-                    filename = f"sd_{timestamp}_{unique_id}.png"
-                    filepath = output_dir / filename
-                    
-                    # Decode and save
-                    img_data = base64.b64decode(img_base64)
-                    with open(filepath, "wb") as f:
-                        f.write(img_data)
-                    
-                    saved_images.append({
-                        "filename": filename,
-                        "filepath": str(filepath),
-                        "base64": img_base64,
-                        "url": f"/api/images/generated/{user_id}/{filename}"
-                    })
-                    
-                    logger.info(f"Saved generated image: {user_id}/{filename}")
-                
-                # Get generation info
-                info = result.get("info", "{}")
-                if isinstance(info, str):
-                    import json
-                    try:
-                        info = json.loads(info)
-                    except:
-                        info = {}
-                
+            
+            images = result.get("images", [])
+            if not images:
                 return {
-                    "success": True,
-                    "type": "generated_image",
-                    "images": saved_images,
-                    "prompt": prompt,
-                    "negative_prompt": negative_prompt,
-                    "seed": info.get("seed", seed),
-                    "steps": steps,
-                    "cfg_scale": cfg_scale,
-                    "sampler": sampler_name,
-                    "width": width,
-                    "height": height,
-                    "generation_time_ms": int(info.get("generation_time", 0) * 1000) if info.get("generation_time") else None
+                    "success": False,
+                    "error": "No images generated"
                 }
+            
+            # Save images and prepare response
+            saved_images = []
+            for i, img_base64 in enumerate(images):
+                # Generate unique filename
+                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                unique_id = str(uuid.uuid4())[:8]
+                filename = f"sd_{timestamp}_{unique_id}.png"
+                filepath = output_dir / filename
                 
-        except httpx.TimeoutException:
+                # Decode and save
+                img_data = base64.b64decode(img_base64)
+                with open(filepath, "wb") as f:
+                    f.write(img_data)
+                
+                saved_images.append({
+                    "filename": filename,
+                    "filepath": str(filepath),
+                    "base64": img_base64,
+                    "url": f"/api/images/generated/{user_id}/{filename}"
+                })
+                
+                logger.info(f"Saved generated image: {user_id}/{filename}")
+            
+            # Get generation info
+            info = result.get("info", "{}")
+            if isinstance(info, str):
+                import json
+                try:
+                    info = json.loads(info)
+                except:
+                    info = {}
+            
+            return {
+                "success": True,
+                "type": "generated_image",
+                "images": saved_images,
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "seed": info.get("seed", seed),
+                "steps": steps,
+                "cfg_scale": cfg_scale,
+                "sampler": sampler_name,
+                "width": width,
+                "height": height,
+                "generation_time_ms": int(info.get("generation_time", 0) * 1000) if info.get("generation_time") else None
+            }
+                
+        except asyncio.TimeoutError:
             logger.error("Image generation timed out")
             return {
                 "success": False,
