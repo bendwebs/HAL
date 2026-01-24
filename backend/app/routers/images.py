@@ -13,15 +13,23 @@ from app.config import settings
 router = APIRouter(prefix="/images", tags=["Images"])
 
 
-@router.get("/generated/{filename}")
-async def get_generated_image(filename: str):
-    """Serve a generated image file"""
+@router.get("/generated/{user_id}/{filename}")
+async def get_generated_image(
+    user_id: str,
+    filename: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Serve a generated image file (user can only access their own images)"""
+    # Validate user can only access their own images
+    if str(current_user["_id"]) != user_id:
+        raise HTTPException(status_code=403, detail="Access denied - you can only view your own generated images")
+    
     # Validate filename to prevent path traversal
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
     
-    output_dir = Path(getattr(settings, 'data_dir', './data')) / 'generated_images'
-    filepath = output_dir / filename
+    base_dir = Path(getattr(settings, 'data_dir', './data')) / 'generated_images'
+    filepath = base_dir / user_id / filename
     
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Image not found")
@@ -31,6 +39,50 @@ async def get_generated_image(filename: str):
         media_type="image/png",
         filename=filename
     )
+
+
+@router.get("/my-images")
+async def list_my_images(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """List all generated images for the current user"""
+    user_id = str(current_user["_id"])
+    base_dir = Path(getattr(settings, 'data_dir', './data')) / 'generated_images' / user_id
+    
+    if not base_dir.exists():
+        return {"images": []}
+    
+    images = []
+    for filepath in sorted(base_dir.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True):
+        images.append({
+            "filename": filepath.name,
+            "url": f"/api/images/generated/{user_id}/{filepath.name}",
+            "created_at": filepath.stat().st_mtime
+        })
+    
+    return {"images": images}
+
+
+@router.delete("/generated/{filename}")
+async def delete_generated_image(
+    filename: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Delete a generated image (user can only delete their own)"""
+    user_id = str(current_user["_id"])
+    
+    # Validate filename
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    base_dir = Path(getattr(settings, 'data_dir', './data')) / 'generated_images'
+    filepath = base_dir / user_id / filename
+    
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    filepath.unlink()
+    return {"message": "Image deleted", "filename": filename}
 
 
 @router.get("/sd/status")
@@ -55,7 +107,6 @@ async def stable_diffusion_status(
     }
     
     if available:
-        # Get additional info
         models_result = await sd.get_models()
         if models_result.get("success"):
             result["models"] = models_result["models"]

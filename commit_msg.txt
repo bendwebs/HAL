@@ -1,8 +1,21 @@
-fix: pass full generated_image result to frontend
+feat: organize generated images by user for privacy
 
-The action_complete handler was only passing full structured data
-for youtube_results, but extracting just result.get("result") for
-other tools - which doesn't exist for generated_image.
+Images are now stored in user-specific directories:
+  data/generated_images/{user_id}/filename.png
 
-Now both youtube_results and generated_image types pass their full
-result object to the frontend, allowing proper image rendering.
+Changes:
+- stable_diffusion_service.py:
+  - Added user_id parameter to generate_image() and img2img()
+  - Created _get_user_output_dir() helper
+  - URLs now include user_id: /api/images/generated/{user_id}/{filename}
+
+- images.py router:
+  - Updated endpoint to /generated/{user_id}/{filename}
+  - Added access control - users can only view their own images
+  - Added GET /my-images endpoint to list user's generated images
+  - Added DELETE /generated/{filename} to delete own images
+
+- agent_system.py:
+  - Pass user_id to generate_image() call
+
+This ensures users' generated images are private and organized.

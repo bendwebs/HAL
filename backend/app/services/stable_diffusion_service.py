@@ -19,9 +19,15 @@ class StableDiffusionService:
     
     def __init__(self):
         self.api_url = getattr(settings, 'sd_api_url', 'http://127.0.0.1:7860')
-        self.output_dir = Path(getattr(settings, 'data_dir', './data')) / 'generated_images'
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.base_output_dir = Path(getattr(settings, 'data_dir', './data')) / 'generated_images'
+        self.base_output_dir.mkdir(parents=True, exist_ok=True)
         self._available = None
+    
+    def _get_user_output_dir(self, user_id: str) -> Path:
+        """Get user-specific output directory"""
+        user_dir = self.base_output_dir / user_id
+        user_dir.mkdir(parents=True, exist_ok=True)
+        return user_dir
     
     @property
     def is_available(self) -> bool:
@@ -44,11 +50,9 @@ class StableDiffusionService:
     
     async def ensure_running(self) -> Dict[str, Any]:
         """Ensure SD is running, starting it if necessary"""
-        # First check if already available
         if await self.check_availability():
             return {"success": True, "message": "Stable Diffusion is ready"}
         
-        # Try to start it
         from app.services.sd_process_manager import get_sd_process_manager
         manager = get_sd_process_manager()
         
@@ -98,6 +102,7 @@ class StableDiffusionService:
     
     async def generate_image(
         self,
+        user_id: str,
         prompt: str,
         negative_prompt: str = "",
         width: int = 512,
@@ -112,6 +117,7 @@ class StableDiffusionService:
         Generate an image using Stable Diffusion.
         
         Args:
+            user_id: The user's ID (for organizing images)
             prompt: The image generation prompt
             negative_prompt: Things to avoid in the image
             width: Image width (default 512)
@@ -130,6 +136,9 @@ class StableDiffusionService:
         if not ensure_result.get("success"):
             return ensure_result
         
+        # Get user-specific output directory
+        output_dir = self._get_user_output_dir(user_id)
+        
         payload = {
             "prompt": prompt,
             "negative_prompt": negative_prompt or "blurry, bad quality, distorted, ugly, deformed",
@@ -142,7 +151,7 @@ class StableDiffusionService:
             "batch_size": batch_size
         }
         
-        logger.info(f"Generating image with prompt: {prompt[:100]}...")
+        logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -167,7 +176,7 @@ class StableDiffusionService:
                     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
                     unique_id = str(uuid.uuid4())[:8]
                     filename = f"sd_{timestamp}_{unique_id}.png"
-                    filepath = self.output_dir / filename
+                    filepath = output_dir / filename
                     
                     # Decode and save
                     img_data = base64.b64decode(img_base64)
@@ -178,10 +187,10 @@ class StableDiffusionService:
                         "filename": filename,
                         "filepath": str(filepath),
                         "base64": img_base64,
-                        "url": f"/api/images/generated/{filename}"
+                        "url": f"/api/images/generated/{user_id}/{filename}"
                     })
                     
-                    logger.info(f"Saved generated image: {filename}")
+                    logger.info(f"Saved generated image: {user_id}/{filename}")
                 
                 # Get generation info
                 info = result.get("info", "{}")
@@ -222,6 +231,7 @@ class StableDiffusionService:
     
     async def img2img(
         self,
+        user_id: str,
         prompt: str,
         init_image_base64: str,
         negative_prompt: str = "",
@@ -237,6 +247,7 @@ class StableDiffusionService:
         Generate an image based on an input image (img2img).
         
         Args:
+            user_id: The user's ID (for organizing images)
             prompt: The image generation prompt
             init_image_base64: Base64 encoded input image
             negative_prompt: Things to avoid
@@ -251,6 +262,9 @@ class StableDiffusionService:
                 "success": False,
                 "error": "Stable Diffusion API is not available."
             }
+        
+        # Get user-specific output directory
+        output_dir = self._get_user_output_dir(user_id)
         
         payload = {
             "prompt": prompt,
@@ -283,7 +297,7 @@ class StableDiffusionService:
                 timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
                 unique_id = str(uuid.uuid4())[:8]
                 filename = f"sd_i2i_{timestamp}_{unique_id}.png"
-                filepath = self.output_dir / filename
+                filepath = output_dir / filename
                 
                 img_data = base64.b64decode(img_base64)
                 with open(filepath, "wb") as f:
@@ -296,7 +310,7 @@ class StableDiffusionService:
                         "filename": filename,
                         "filepath": str(filepath),
                         "base64": img_base64,
-                        "url": f"/api/images/generated/{filename}"
+                        "url": f"/api/images/generated/{user_id}/{filename}"
                     }],
                     "prompt": prompt,
                     "denoising_strength": denoising_strength

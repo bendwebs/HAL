@@ -357,10 +357,11 @@ class AgentSystem:
                 if not await sd.check_availability():
                     logger.info(f"[GENERATE_IMAGE] SD not running, will auto-start...")
                 
-                logger.info(f"[GENERATE_IMAGE] Generating image: {prompt[:100]}...")
+                logger.info(f"[GENERATE_IMAGE] Generating image for user {user_id}: {prompt[:100]}...")
                 
                 # generate_image now handles ensure_running internally
                 result = await sd.generate_image(
+                    user_id=user_id,
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     width=width,
