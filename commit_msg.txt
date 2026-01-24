@@ -1,21 +1,13 @@
-feat: organize generated images by user for privacy
+fix: don't send base64 image data to LLM in tool results
 
-Images are now stored in user-specific directories:
-  data/generated_images/{user_id}/filename.png
+The generated_image result was including full base64 image data
+(500KB-1MB per image) in the tool result sent back to the LLM.
+This caused timeouts/errors in the second LLM call.
 
-Changes:
-- stable_diffusion_service.py:
-  - Added user_id parameter to generate_image() and img2img()
-  - Created _get_user_output_dir() helper
-  - URLs now include user_id: /api/images/generated/{user_id}/{filename}
+Now we sanitize the tool result before sending to LLM:
+- Remove base64 data from generated_image results
+- Send only metadata (success, prompt, dimensions, seed)
+- The full result with images is still sent to frontend via action_complete
 
-- images.py router:
-  - Updated endpoint to /generated/{user_id}/{filename}
-  - Added access control - users can only view their own images
-  - Added GET /my-images endpoint to list user's generated images
-  - Added DELETE /generated/{filename} to delete own images
-
-- agent_system.py:
-  - Pass user_id to generate_image() call
-
-This ensures users' generated images are private and organized.
+This keeps the LLM context reasonable while preserving the full
+image data for frontend rendering.

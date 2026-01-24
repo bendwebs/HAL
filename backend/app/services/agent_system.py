@@ -650,11 +650,30 @@ class AgentSystem:
                 "tool_calls": tool_calls_to_execute
             })
             
-            # Add tool results
+            # Add tool results (sanitized for LLM - remove large data like base64 images)
             for tr in tool_results:
+                result = tr["result"]
+                
+                # For generated_image results, create a summary without base64 data
+                if result.get("type") == "generated_image":
+                    llm_result = {
+                        "success": result.get("success"),
+                        "type": "generated_image",
+                        "message": f"Successfully generated {len(result.get('images', []))} image(s)",
+                        "prompt": result.get("prompt"),
+                        "width": result.get("width"),
+                        "height": result.get("height"),
+                        "seed": result.get("seed")
+                    }
+                # For youtube_results, keep metadata but could trim if needed
+                elif result.get("type") == "youtube_results":
+                    llm_result = result  # YouTube results are already reasonable size
+                else:
+                    llm_result = result
+                
                 messages.append({
                     "role": "tool",
-                    "content": json.dumps(tr["result"])
+                    "content": json.dumps(llm_result)
                 })
             
             # Final streaming response
@@ -681,7 +700,9 @@ class AgentSystem:
                             }
                         }
             except Exception as e:
-                yield {"type": "error", "data": {"message": str(e)}}
+                logger.error(f"Error during second LLM call: {e}")
+                yield {"type": "error", "data": {"message": f"Failed to generate response: {str(e)}"}}
+                return
         
         else:
             # No tool calls - stream the first response content
