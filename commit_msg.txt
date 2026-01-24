@@ -1,16 +1,11 @@
-fix: show tool running status during SD startup
+fix: pass --api as command line argument instead of env var
 
-Problems fixed:
-1. Frontend wasn't handling 'action_start' event - user saw no feedback
-2. 'action_complete' was adding duplicate actions instead of updating
+The COMMANDLINE_ARGS environment variable is only used for logging,
+not for actually passing arguments. webui.bat uses %* to pass args
+to launch.py.
 
-Changes:
-- chat/[id]/page.tsx: Added action_start handler to show tool as running
-- chat/[id]/page.tsx: action_complete now updates existing action by ID
-- sd_process_manager.py: Log every 10s instead of 15s for better feedback
-- agent_system.py: Added log when SD needs to auto-start
+Updated run_api.bat to:
+- Call webui.bat --api (passes --api through to launch.py)
+- Removed --nowebui since --api alone enables the API alongside UI
 
-Now when user asks to generate an image:
-1. Tool shows as "running" immediately (spinner)
-2. Backend logs show SD startup progress every 10s
-3. Tool updates to "complete" with result when done
+This should properly enable the SD API endpoint.

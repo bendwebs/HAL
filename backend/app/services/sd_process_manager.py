@@ -61,14 +61,16 @@ class SDProcessManager:
         webui_dir = sd_path / 'webui'
         
         if run_bat.exists() and env_bat.exists() and webui_dir.exists():
-            # Portable install - create API launcher
+            # Portable install - create API launcher that passes args to launch.py
             launcher_path = sd_path / 'run_api.bat'
             
+            # The key is to pass --api to launch.py directly via %*
+            # webui.bat runs: %PYTHON% launch.py %*
+            # So we need to make sure args flow through
             launcher_content = f'''@echo off
 call "{env_bat}"
 cd /d "{webui_dir}"
-set COMMANDLINE_ARGS=--api --nowebui
-call webui.bat
+call webui.bat --api
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
             with open(launcher_path, 'w') as f:
@@ -81,9 +83,9 @@ call webui.bat
         if webui_user.exists():
             launcher_path = sd_path / 'webui-api.bat'
             
+            # Pass --api as argument
             launcher_content = f'''@echo off
-set COMMANDLINE_ARGS=--api --nowebui
-call "{webui_user}"
+call "{webui_user}" --api
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
             with open(launcher_path, 'w') as f:
