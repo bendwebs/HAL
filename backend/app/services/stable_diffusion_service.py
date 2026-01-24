@@ -2,7 +2,8 @@
 
 from typing import Dict, Any, Optional
 import logging
-import requests
+import subprocess
+import json
 import base64
 import os
 from datetime import datetime
@@ -34,12 +35,28 @@ class StableDiffusionService:
         """Check if Stable Diffusion API is available (cached)"""
         return self._available if self._available is not None else False
     
+    def _curl_get(self, url: str, timeout: int = 10) -> Optional[dict]:
+        """Make a GET request using curl subprocess"""
+        import subprocess
+        import json as json_module
+        try:
+            result = subprocess.run(
+                ['curl', '-s', '-X', 'GET', url, '--max-time', str(timeout)],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 5
+            )
+            if result.returncode == 0 and result.stdout:
+                return json_module.loads(result.stdout)
+            return None
+        except Exception:
+            return None
+    
     async def check_availability(self) -> bool:
         """Check if Stable Diffusion API is reachable"""
         try:
-            # Use sync requests to avoid httpx connection issues
-            response = requests.get(f"{self.api_url}/sdapi/v1/options", timeout=10.0)
-            self._available = response.status_code == 200
+            result = self._curl_get(f"{self.api_url}/sdapi/v1/options")
+            self._available = result is not None
             if self._available:
                 logger.debug(f"Stable Diffusion API available at {self.api_url}")
             return self._available
@@ -51,9 +68,9 @@ class StableDiffusionService:
     async def get_progress(self) -> Dict[str, Any]:
         """Check current generation progress"""
         try:
-            response = requests.get(f"{self.api_url}/sdapi/v1/progress", timeout=5.0)
-            if response.status_code == 200:
-                return response.json()
+            result = self._curl_get(f"{self.api_url}/sdapi/v1/progress", timeout=5)
+            if result:
+                return result
             return {"state": {"job_count": 0}}
         except Exception as e:
             logger.warning(f"Failed to get progress: {e}")
@@ -84,13 +101,13 @@ class StableDiffusionService:
     async def get_models(self) -> Dict[str, Any]:
         """Get list of available SD models/checkpoints"""
         try:
-            response = requests.get(f"{self.api_url}/sdapi/v1/sd-models", timeout=10.0)
-            response.raise_for_status()
-            models = response.json()
-            return {
-                "success": True,
-                "models": [m.get("title", m.get("model_name", "unknown")) for m in models]
-            }
+            result = self._curl_get(f"{self.api_url}/sdapi/v1/sd-models")
+            if result:
+                return {
+                    "success": True,
+                    "models": [m.get("title", m.get("model_name", "unknown")) for m in result]
+                }
+            return {"success": False, "error": "Failed to get models"}
         except Exception as e:
             logger.error(f"Failed to get SD models: {e}")
             return {"success": False, "error": str(e)}
@@ -98,13 +115,13 @@ class StableDiffusionService:
     async def get_samplers(self) -> Dict[str, Any]:
         """Get list of available samplers"""
         try:
-            response = requests.get(f"{self.api_url}/sdapi/v1/samplers", timeout=10.0)
-            response.raise_for_status()
-            samplers = response.json()
-            return {
-                "success": True,
-                "samplers": [s.get("name", "unknown") for s in samplers]
-            }
+            result = self._curl_get(f"{self.api_url}/sdapi/v1/samplers")
+            if result:
+                return {
+                    "success": True,
+                    "samplers": [s.get("name", "unknown") for s in result]
+                }
+            return {"success": False, "error": "Failed to get samplers"}
         except Exception as e:
             logger.error(f"Failed to get samplers: {e}")
             return {"success": False, "error": str(e)}
@@ -163,18 +180,39 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            # Use synchronous requests - httpx seems to cause connection issues with SD
-            logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
+            import subprocess
+            import json as json_module
             
-            response = requests.post(
-                f"{self.api_url}/sdapi/v1/txt2img",
-                json=payload,
-                timeout=300  # 5 min timeout for slow generations
+            # Use curl subprocess - proven to work reliably with SD
+            curl_payload = json_module.dumps(payload)
+            
+            logger.info(f"Sending txt2img request via curl to {self.api_url}/sdapi/v1/txt2img...")
+            
+            # Run curl synchronously in subprocess
+            result_proc = subprocess.run(
+                [
+                    'curl', '-s', '-X', 'POST',
+                    f'{self.api_url}/sdapi/v1/txt2img',
+                    '-H', 'Content-Type: application/json',
+                    '-d', curl_payload,
+                    '--max-time', '300'
+                ],
+                capture_output=True,
+                text=True,
+                timeout=310
             )
             
-            logger.info(f"txt2img response status: {response.status_code}")
-            response.raise_for_status()
-            result = response.json()
+            if result_proc.returncode != 0:
+                error_msg = result_proc.stderr or f"curl failed with code {result_proc.returncode}"
+                logger.error(f"curl failed: {error_msg}")
+                return {"success": False, "error": error_msg}
+            
+            if not result_proc.stdout:
+                logger.error("curl returned empty response")
+                return {"success": False, "error": "Empty response from SD"}
+            
+            result = json_module.loads(result_proc.stdout)
+            logger.info(f"txt2img response received successfully")
             
             images = result.get("images", [])
             if not images:
@@ -230,7 +268,7 @@ class StableDiffusionService:
                 "generation_time_ms": int(info.get("generation_time", 0) * 1000) if info.get("generation_time") else None
             }
                 
-        except requests.Timeout:
+        except subprocess.TimeoutExpired:
             logger.error("Image generation timed out")
             return {
                 "success": False,

@@ -1,10 +1,10 @@
-fix: replace all httpx calls with synchronous requests library
+fix: use curl subprocess for ALL SD API calls
 
-httpx async client was causing SD to hang after first request.
-Switching entirely to synchronous requests library which works
-reliably (as confirmed by manual curl tests working fine).
+Since manual curl commands work reliably with SD but Python HTTP
+libraries (httpx, aiohttp, requests) all cause hangs after the
+first request, switch entirely to curl subprocess calls.
 
-- Removed httpx import
-- Changed check_availability, get_progress, get_models, get_samplers
-- Simplified generate_image to use direct requests.post
-- Removed auto-restart logic (shouldn't be needed now)
+- Added _curl_get helper method for GET requests
+- Converted check_availability, get_progress, get_models, get_samplers
+- Converted generate_image to use synchronous subprocess.run
+- Removed requests import
