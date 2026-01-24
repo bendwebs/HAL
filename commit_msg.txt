@@ -1,24 +1,18 @@
-fix: show all tools dynamically in ToolToggle component
+fix: support portable SD install with run.bat and add config
 
-Previously, ToolToggle only showed 6 hardcoded tools from DEFAULT_TOOLS.
-Now it dynamically loads and displays ALL tools from the API.
+Updated sd_process_manager.py to handle various SD installation types:
+- Portable installs with run.bat at root (like sd.webui packages)
+- Standard installs with webui-user.bat
+- Installs with webui subfolder
+- Linux installs with webui.sh
 
-Changes:
-- ToolToggle.tsx: Render tools from API instead of hardcoded list
-- Added icons for generate_image (ImageIcon) and spawn_agent (Bot)
-- Added descriptions for new tools
-- Added max-height with scroll for the tool menu
-- Sort tools: enabled first, then alphabetically
-- Enable All now enables all tools from API
-- Updated DEFAULT_ENABLED_TOOLS to include generate_image
-- agent_system.py: Added generate_image to default enabled tools
+Key changes:
+- _find_launch_script() detects installation type
+- Sets COMMANDLINE_ARGS env var for --api --nowebui flags
+- Better logging during startup wait
+- Increased default timeout to 180s (SD can be slow to load)
 
-Now all 8 tools appear in the Tools menu:
-- Web Search
-- YouTube Search
-- Generate Image (NEW)
-- Document Search
-- Memory Recall
-- Memory Store
-- Calculator
-- Spawn Agent
+Added to .env:
+- SD_WEBUI_PATH=E:\Stable_diffusion\sd.webui-1.10.1-blackwell
+- SD_API_URL=http://127.0.0.1:7860
+- SD_STARTUP_TIMEOUT=180
