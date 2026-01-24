@@ -1,13 +1,1 @@
-fix: don't send base64 image data to LLM in tool results
-
-The generated_image result was including full base64 image data
-(500KB-1MB per image) in the tool result sent back to the LLM.
-This caused timeouts/errors in the second LLM call.
-
-Now we sanitize the tool result before sending to LLM:
-- Remove base64 data from generated_image results
-- Send only metadata (success, prompt, dimensions, seed)
-- The full result with images is still sent to frontend via action_complete
-
-This keeps the LLM context reasonable while preserving the full
-image data for frontend rendering.
+fix: add --nowebui flag for headless SD operation

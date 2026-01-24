@@ -64,13 +64,13 @@ class SDProcessManager:
             # Portable install - create API launcher that passes args to launch.py
             launcher_path = sd_path / 'run_api.bat'
             
-            # The key is to pass --api to launch.py directly via %*
+            # The key is to pass --api --nowebui to launch.py directly via %*
             # webui.bat runs: %PYTHON% launch.py %*
-            # So we need to make sure args flow through
+            # --nowebui makes it headless (no browser UI)
             launcher_content = f'''@echo off
 call "{env_bat}"
 cd /d "{webui_dir}"
-call webui.bat --api
+call webui.bat --api --nowebui
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
             with open(launcher_path, 'w') as f:
@@ -83,9 +83,9 @@ call webui.bat --api
         if webui_user.exists():
             launcher_path = sd_path / 'webui-api.bat'
             
-            # Pass --api as argument
+            # Pass --api --nowebui as arguments
             launcher_content = f'''@echo off
-call "{webui_user}" --api
+call "{webui_user}" --api --nowebui
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
             with open(launcher_path, 'w') as f:
