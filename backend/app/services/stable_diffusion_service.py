@@ -2,7 +2,6 @@
 
 from typing import Dict, Any, Optional
 import logging
-import httpx
 import requests
 import base64
 import os
@@ -38,12 +37,12 @@ class StableDiffusionService:
     async def check_availability(self) -> bool:
         """Check if Stable Diffusion API is reachable"""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:  # Increased timeout
-                response = await client.get(f"{self.api_url}/sdapi/v1/options")
-                self._available = response.status_code == 200
-                if self._available:
-                    logger.debug(f"Stable Diffusion API available at {self.api_url}")
-                return self._available
+            # Use sync requests to avoid httpx connection issues
+            response = requests.get(f"{self.api_url}/sdapi/v1/options", timeout=10.0)
+            self._available = response.status_code == 200
+            if self._available:
+                logger.debug(f"Stable Diffusion API available at {self.api_url}")
+            return self._available
         except Exception as e:
             logger.warning(f"Stable Diffusion API not available: {e}")
             self._available = False
@@ -52,11 +51,10 @@ class StableDiffusionService:
     async def get_progress(self) -> Dict[str, Any]:
         """Check current generation progress"""
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self.api_url}/sdapi/v1/progress")
-                if response.status_code == 200:
-                    return response.json()
-                return {"state": {"job_count": 0}}
+            response = requests.get(f"{self.api_url}/sdapi/v1/progress", timeout=5.0)
+            if response.status_code == 200:
+                return response.json()
+            return {"state": {"job_count": 0}}
         except Exception as e:
             logger.warning(f"Failed to get progress: {e}")
             return {"state": {"job_count": 0}}
@@ -86,14 +84,13 @@ class StableDiffusionService:
     async def get_models(self) -> Dict[str, Any]:
         """Get list of available SD models/checkpoints"""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.api_url}/sdapi/v1/sd-models")
-                response.raise_for_status()
-                models = response.json()
-                return {
-                    "success": True,
-                    "models": [m.get("title", m.get("model_name", "unknown")) for m in models]
-                }
+            response = requests.get(f"{self.api_url}/sdapi/v1/sd-models", timeout=10.0)
+            response.raise_for_status()
+            models = response.json()
+            return {
+                "success": True,
+                "models": [m.get("title", m.get("model_name", "unknown")) for m in models]
+            }
         except Exception as e:
             logger.error(f"Failed to get SD models: {e}")
             return {"success": False, "error": str(e)}
@@ -101,14 +98,13 @@ class StableDiffusionService:
     async def get_samplers(self) -> Dict[str, Any]:
         """Get list of available samplers"""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.api_url}/sdapi/v1/samplers")
-                response.raise_for_status()
-                samplers = response.json()
-                return {
-                    "success": True,
-                    "samplers": [s.get("name", "unknown") for s in samplers]
-                }
+            response = requests.get(f"{self.api_url}/sdapi/v1/samplers", timeout=10.0)
+            response.raise_for_status()
+            samplers = response.json()
+            return {
+                "success": True,
+                "samplers": [s.get("name", "unknown") for s in samplers]
+            }
         except Exception as e:
             logger.error(f"Failed to get samplers: {e}")
             return {"success": False, "error": str(e)}
@@ -167,44 +163,14 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            import asyncio
-            import json as json_module
-            
-            # Use synchronous requests in a thread to avoid async connection issues
-            import requests
-            from concurrent.futures import ThreadPoolExecutor
-            
-            def make_request():
-                return requests.post(
-                    f"{self.api_url}/sdapi/v1/txt2img",
-                    json=payload,
-                    timeout=60  # 60 second timeout - if it takes longer, SD is probably stuck
-                )
-            
+            # Use synchronous requests - httpx seems to cause connection issues with SD
             logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
             
-            # Run sync request in thread pool
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor() as executor:
-                try:
-                    response = await asyncio.wait_for(
-                        loop.run_in_executor(executor, make_request),
-                        timeout=65  # Slightly longer than requests timeout
-                    )
-                except (asyncio.TimeoutError, requests.Timeout):
-                    # SD is probably stuck - restart it
-                    logger.warning("SD request timed out - restarting SD...")
-                    from app.services.sd_process_manager import get_sd_process_manager
-                    manager = get_sd_process_manager()
-                    await manager.stop()
-                    await asyncio.sleep(2)
-                    restart_result = await manager.start()
-                    if not restart_result.get("success"):
-                        return {"success": False, "error": "SD timed out and failed to restart"}
-                    
-                    # Retry the request
-                    logger.info("Retrying generation after SD restart...")
-                    response = await loop.run_in_executor(executor, make_request)
+            response = requests.post(
+                f"{self.api_url}/sdapi/v1/txt2img",
+                json=payload,
+                timeout=300  # 5 min timeout for slow generations
+            )
             
             logger.info(f"txt2img response status: {response.status_code}")
             response.raise_for_status()

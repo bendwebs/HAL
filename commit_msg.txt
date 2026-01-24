@@ -1,5 +1,10 @@
-fix: auto-restart SD if generation times out
+fix: replace all httpx calls with synchronous requests library
 
-SD appears to get stuck after first generation. This adds automatic
-restart if the request times out after 60 seconds, then retries
-the generation request.
+httpx async client was causing SD to hang after first request.
+Switching entirely to synchronous requests library which works
+reliably (as confirmed by manual curl tests working fine).
+
+- Removed httpx import
+- Changed check_availability, get_progress, get_models, get_samplers
+- Simplified generate_image to use direct requests.post
+- Removed auto-restart logic (shouldn't be needed now)
