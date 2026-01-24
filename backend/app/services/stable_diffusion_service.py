@@ -166,21 +166,39 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            import aiohttp
             import asyncio
+            import subprocess
+            import json as json_module
             
-            # Use aiohttp instead of httpx - may handle connections differently
-            timeout = aiohttp.ClientTimeout(total=300, connect=30)
+            # Use subprocess to make the request completely isolated from async event loop
+            # This avoids any potential connection pooling or async issues
+            curl_payload = json_module.dumps(payload)
             
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
-                async with session.post(
-                    f"{self.api_url}/sdapi/v1/txt2img",
-                    json=payload
-                ) as response:
-                    logger.info(f"txt2img response status: {response.status}")
-                    response.raise_for_status()
-                    result = await response.json()
+            logger.info(f"Sending txt2img request via curl to {self.api_url}/sdapi/v1/txt2img...")
+            
+            # Run curl in a subprocess
+            process = await asyncio.create_subprocess_exec(
+                'curl', '-s', '-X', 'POST',
+                f'{self.api_url}/sdapi/v1/txt2img',
+                '-H', 'Content-Type: application/json',
+                '-d', curl_payload,
+                '--max-time', '300',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=310  # Slightly longer than curl timeout
+            )
+            
+            if process.returncode != 0:
+                error_msg = stderr.decode() if stderr else f"curl failed with code {process.returncode}"
+                logger.error(f"curl failed: {error_msg}")
+                return {"success": False, "error": error_msg}
+            
+            result = json_module.loads(stdout.decode())
+            logger.info(f"txt2img response received successfully")
                 
                 images = result.get("images", [])
                 if not images:

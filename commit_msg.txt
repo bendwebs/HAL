@@ -1,4 +1,5 @@
-fix: switch from httpx to aiohttp for SD API requests
+fix: use curl subprocess for SD API requests
 
-httpx may have connection pooling issues causing the second request
-to hang. Switching to aiohttp which handles async HTTP differently.
+Using curl via subprocess completely isolates the HTTP request from
+Python's async event loop and any connection pooling. This is the
+most reliable way to ensure each request is truly independent.
