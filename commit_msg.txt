@@ -1,4 +1,7 @@
-fix: use in-app toast confirmation for image deletion
+fix: use COMMANDLINE_ARGS env var instead of passing args to webui.bat
 
-Replace browser's native confirm() dialog with a toast notification
-that has Delete/Cancel buttons for a better in-app experience.
+The SD webui.bat script reads COMMANDLINE_ARGS environment variable
+rather than command line arguments. Fixed the launcher to set this
+variable before calling webui.bat.
+
+Using --api --nowebui flags to enable API and run headless.
