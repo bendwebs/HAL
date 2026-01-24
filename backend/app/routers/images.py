@@ -80,17 +80,20 @@ async def generate_image(
 @router.get("/generated/{user_id}/{filename}")
 async def get_generated_image(
     user_id: str,
-    filename: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    filename: str
 ):
-    """Serve a generated image file (user can only access their own images)"""
-    # Validate user can only access their own images
-    if str(current_user["_id"]) != user_id:
-        raise HTTPException(status_code=403, detail="Access denied - you can only view your own generated images")
+    """Serve a generated image file.
     
+    Security: URLs contain user_id and UUID-based filename which are unguessable.
+    This allows images to be displayed in <img> tags without auth headers.
+    """
     # Validate filename to prevent path traversal
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    # Validate user_id format (should be MongoDB ObjectId)
+    if not user_id or len(user_id) != 24:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
     
     base_dir = Path(getattr(settings, 'data_dir', './data')) / 'generated_images'
     filepath = base_dir / user_id / filename

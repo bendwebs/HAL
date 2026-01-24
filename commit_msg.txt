@@ -1,5 +1,10 @@
-fix: export API_URL from api.ts and use in generate page
+fix: make generated image serving endpoint public
 
-The generate page was defining its own API_URL which could have a
-different value than the centralized one. Now imports from api.ts
-to ensure consistent URL usage.
+Removed authentication requirement from the image serving endpoint.
+This allows images to be displayed in <img> tags without needing
+auth headers (which browsers can't add to img src requests).
+
+Security is maintained through:
+- User ID in path (24-char MongoDB ObjectId)
+- UUID-based filenames that are unguessable
+- Path traversal validation
