@@ -1,1 +1,1 @@
-fix: add --nowebui flag for headless SD operation
+increase SD timeout to 180s and add request logging

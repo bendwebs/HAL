@@ -154,11 +154,13 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:  # 3 min timeout for slow generations
+                logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
                 response = await client.post(
                     f"{self.api_url}/sdapi/v1/txt2img",
                     json=payload
                 )
+                logger.info(f"txt2img response status: {response.status_code}")
                 response.raise_for_status()
                 result = response.json()
                 
