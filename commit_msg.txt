@@ -1,7 +1,4 @@
-fix: use COMMANDLINE_ARGS env var instead of passing args to webui.bat
+fix: remove --nowebui flag that was preventing SD startup
 
-The SD webui.bat script reads COMMANDLINE_ARGS environment variable
-rather than command line arguments. Fixed the launcher to set this
-variable before calling webui.bat.
-
-Using --api --nowebui flags to enable API and run headless.
+Some SD versions don't support --nowebui properly. Using only --api
+flag which enables the API while still running the web UI.

@@ -65,11 +65,11 @@ class SDProcessManager:
             launcher_path = sd_path / 'run_api.bat'
             
             # Set COMMANDLINE_ARGS which webui.bat reads
-            # --api enables the API, --nowebui disables the web interface
+            # --api enables the API (web UI will still open but API will be available)
             launcher_content = f'''@echo off
 call "{env_bat}"
 cd /d "{webui_dir}"
-set COMMANDLINE_ARGS=--api --nowebui
+set COMMANDLINE_ARGS=--api
 call webui.bat
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
@@ -85,7 +85,7 @@ call webui.bat
             
             # Set COMMANDLINE_ARGS before calling webui-user.bat
             launcher_content = f'''@echo off
-set COMMANDLINE_ARGS=--api --nowebui
+set COMMANDLINE_ARGS=--api
 call "{webui_user}"
 '''
             logger.info(f"Creating API launcher at {launcher_path}")
