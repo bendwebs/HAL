@@ -166,41 +166,21 @@ class StableDiffusionService:
         logger.info(f"Generating image for user {user_id} with prompt: {prompt[:100]}...")
         
         try:
-            # Use explicit timeout configuration
-            timeout = httpx.Timeout(
-                connect=30.0,      # 30s to connect
-                read=300.0,        # 5 min to read response (for slow generations)
-                write=30.0,        # 30s to write request
-                pool=30.0          # 30s to acquire connection from pool
-            )
-            
-            # First, ensure SD is not busy - call interrupt and wait a moment
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as interrupt_client:
-                    await interrupt_client.post(f"{self.api_url}/sdapi/v1/interrupt")
-                    logger.debug("Sent interrupt to clear any pending jobs")
-            except:
-                pass  # Ignore interrupt errors
-            
-            # Small delay to let SD settle
+            import aiohttp
             import asyncio
-            await asyncio.sleep(0.5)
             
-            # Now make the generation request
-            async with httpx.AsyncClient(
-                timeout=timeout,
-                http2=False,
-                limits=httpx.Limits(max_keepalive_connections=0)
-            ) as client:
+            # Use aiohttp instead of httpx - may handle connections differently
+            timeout = aiohttp.ClientTimeout(total=300, connect=30)
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 logger.info(f"Sending txt2img request to {self.api_url}/sdapi/v1/txt2img...")
-                response = await client.post(
+                async with session.post(
                     f"{self.api_url}/sdapi/v1/txt2img",
-                    json=payload,
-                    headers={"Connection": "close"}  # Force connection close
-                )
-                logger.info(f"txt2img response status: {response.status_code}")
-                response.raise_for_status()
-                result = response.json()
+                    json=payload
+                ) as response:
+                    logger.info(f"txt2img response status: {response.status}")
+                    response.raise_for_status()
+                    result = await response.json()
                 
                 images = result.get("images", [])
                 if not images:

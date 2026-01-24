@@ -1,5 +1,4 @@
-fix: add interrupt call and delay before SD generation
+fix: switch from httpx to aiohttp for SD API requests
 
-Call the SD interrupt endpoint before each generation to clear any
-pending jobs, then wait 0.5s for SD to settle. This may fix the
-issue where sequential image generations hang.
+httpx may have connection pooling issues causing the second request
+to hang. Switching to aiohttp which handles async HTTP differently.
