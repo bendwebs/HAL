@@ -249,6 +249,17 @@ function ActionItem({ action, onVideoSelect }: { action: MessageAction; onVideoS
     'type' in action.result &&
     action.result.type === 'generated_image';
   
+  // Debug logging for generate_image actions
+  if (action.name === 'generate_image') {
+    console.log('[ActionItem] generate_image action:', {
+      status: action.status,
+      hasResult: !!action.result,
+      resultType: action.result?.type,
+      isGeneratedImageResult,
+      hasImages: !!(action.result as any)?.images?.length
+    });
+  }
+  
   const TypeIcon = action.name === 'youtube_search' 
     ? Youtube 
     : action.name === 'generate_image'

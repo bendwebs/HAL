@@ -1,8 +1,7 @@
-fix: return SD service result directly, add debug logging
+fix: tell LLM not to render image, add frontend debug logging
 
-The _execute_tool was creating a new result object instead of
-using the service's result which already had the correct structure.
-This caused the 'type: generated_image' to potentially be lost.
+1. Updated LLM tool result message to explicitly tell the LLM
+   not to try to display the image with markdown - the UI handles it
 
-Now we return the service result directly and added debug logging
-to track what's being sent in action_complete.
+2. Added console logging to ActionItem component to debug why
+   generated images aren't rendering during streaming

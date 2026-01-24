@@ -642,11 +642,12 @@ class AgentSystem:
                 result = tr["result"]
                 
                 # For generated_image results, create a summary without base64 data
+                # Tell the LLM not to try to display it - the UI handles that
                 if result.get("type") == "generated_image":
                     llm_result = {
                         "success": result.get("success"),
                         "type": "generated_image",
-                        "message": f"Successfully generated {len(result.get('images', []))} image(s)",
+                        "message": f"Image generated successfully. The image is being displayed to the user by the UI - do NOT try to show it with markdown or base64. Just acknowledge the image was created.",
                         "prompt": result.get("prompt"),
                         "width": result.get("width"),
                         "height": result.get("height"),
