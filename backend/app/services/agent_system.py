@@ -17,6 +17,7 @@ from app.services.resource_monitor import get_resource_monitor
 from app.services.tool_executor import get_tool_executor
 from app.services.web_search import get_web_search_service
 from app.services.youtube_service import get_youtube_service
+from app.services.stable_diffusion_service import get_stable_diffusion_service
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,35 @@ TOOL_DEFINITIONS = {
                     }
                 },
                 "required": ["expression"]
+            }
+        }
+    },
+    "generate_image": {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate an image using Stable Diffusion AI. ALWAYS use this tool when the user asks to create, generate, draw, or make an image, picture, artwork, illustration, or photo. You MUST call this tool - do NOT pretend to generate images without calling it. Provide a detailed prompt describing what should be in the image.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Detailed description of the image to generate. Include style (realistic, anime, oil painting, etc.), subject, setting, lighting, colors, mood, and composition details."
+                    },
+                    "negative_prompt": {
+                        "type": "string",
+                        "description": "Things to avoid in the image. Default: 'blurry, bad quality, distorted, ugly, deformed'"
+                    },
+                    "width": {
+                        "type": "integer",
+                        "description": "Image width in pixels. Default 512. Use 768 or 1024 for larger images."
+                    },
+                    "height": {
+                        "type": "integer",
+                        "description": "Image height in pixels. Default 512. Use 768 or 1024 for larger images."
+                    }
+                },
+                "required": ["prompt"]
             }
         }
     }
@@ -310,6 +340,43 @@ class AgentSystem:
                 else:
                     return {"success": False, "error": result.get("error", "YouTube search failed")}
             
+            elif tool_name == "generate_image":
+                sd = get_stable_diffusion_service()
+                
+                prompt = parameters.get("prompt", "")
+                if not prompt:
+                    return {"success": False, "error": "No prompt provided for image generation"}
+                
+                # Get optional parameters with defaults
+                negative_prompt = parameters.get("negative_prompt", "")
+                width = min(parameters.get("width", 512), 1024)  # Cap at 1024
+                height = min(parameters.get("height", 512), 1024)
+                steps = min(parameters.get("steps", 20), 50)  # Cap at 50 steps
+                
+                # Check if SD needs to start (this is quick)
+                if not await sd.check_availability():
+                    logger.info(f"[GENERATE_IMAGE] SD not running, will auto-start...")
+                
+                logger.info(f"[GENERATE_IMAGE] Generating image for user {user_id}: {prompt[:100]}...")
+                
+                # generate_image now handles ensure_running internally
+                result = await sd.generate_image(
+                    user_id=user_id,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    steps=steps
+                )
+                
+                if result.get("success"):
+                    await tool_executor.record_tool_usage("generate_image")
+                    logger.info(f"[GENERATE_IMAGE] Successfully generated {len(result.get('images', []))} image(s)")
+                    # Return the service result directly - it already has the correct structure
+                    return result
+                else:
+                    return {"success": False, "error": result.get("error", "Image generation failed")}
+            
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
         
@@ -334,7 +401,7 @@ class AgentSystem:
         
         # Default tools if not specified
         if enabled_tools is None:
-            enabled_tools = ["web_search", "youtube_search", "document_search", "memory_recall", "memory_store", "calculator"]
+            enabled_tools = ["web_search", "youtube_search", "generate_image", "document_search", "memory_recall", "memory_store", "calculator"]
         
         # Get system prompt with tool availability info and memory context for voice mode
         system_prompt = await self._get_system_prompt(
@@ -445,6 +512,11 @@ class AgentSystem:
             'video', 'youtube', 'watch', 'show me', 'find me', 'play'
         ]) and 'youtube_search' in (enabled_tools or [])
         
+        # Check if this looks like an image generation request
+        is_image_request = any(phrase in message_lower for phrase in [
+            'generate', 'create', 'make', 'draw', 'image', 'picture', 'photo', 'artwork', 'illustration'
+        ]) and 'generate_image' in (enabled_tools or [])
+        
         # First call - with tools to see if model wants to use any
         tool_calls_to_execute = []
         first_response_content = ""
@@ -496,6 +568,34 @@ class AgentSystem:
                     tool_calls_to_execute = retry_msg["tool_calls"]
                     first_response_content = retry_msg.get("content", "")
                     logger.info(f"[YOUTUBE RETRY] Success! Tool calls: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
+            
+            # If user asked for image generation but model didn't call generate_image, retry with a hint
+            elif is_image_request and not tool_calls_to_execute:
+                logger.info(f"[IMAGE RETRY] User asked for image but model didn't call tool, retrying with hint")
+                
+                # Add a hint message and retry
+                retry_messages = messages.copy()
+                retry_messages.append({
+                    "role": "assistant", 
+                    "content": "I need to use the generate_image tool to create this image for you."
+                })
+                retry_messages.append({
+                    "role": "user",
+                    "content": "Yes, please use the generate_image tool to generate the image."
+                })
+                
+                retry_response = await ollama.chat(
+                    model=model,
+                    messages=retry_messages,
+                    system=system_prompt,
+                    tools=tools
+                )
+                
+                retry_msg = retry_response.get("message", {})
+                if retry_msg.get("tool_calls"):
+                    tool_calls_to_execute = retry_msg["tool_calls"]
+                    first_response_content = retry_msg.get("content", "")
+                    logger.info(f"[IMAGE RETRY] Success! Tool calls: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
         except Exception as e:
             logger.error(f"First LLM call failed: {e}")
             yield {"type": "error", "data": {"message": str(e)}}
@@ -540,11 +640,11 @@ class AgentSystem:
             # Notify completion
             status = "complete" if result.get("success") else "failed"
             
-            # For structured results (like youtube_results), pass the entire result object
+            # For structured results (like youtube_results, generated_image), pass the entire result object
             # For simple results, extract just the result/error string
-            if result.get("type") == "youtube_results":
-                result_data = result  # Pass full structured data for YouTube
-                logger.info(f"[YOUTUBE] Yielding action_complete with full result data, videos={len(result.get('videos', []))}")
+            if result.get("type") in ["youtube_results", "generated_image"]:
+                result_data = result  # Pass full structured data
+                logger.info(f"[{tool_name.upper()}] Yielding action_complete with full result data, type={result.get('type')}, has_images={bool(result.get('images'))}")
             else:
                 result_data = result.get("result") or result.get("error")
             
@@ -570,11 +670,31 @@ class AgentSystem:
                 "tool_calls": tool_calls_to_execute
             })
             
-            # Add tool results
+            # Add tool results (sanitized for LLM - remove large data like base64 images)
             for tr in tool_results:
+                result = tr["result"]
+                
+                # For generated_image results, create a summary without base64 data
+                # Tell the LLM not to try to display it - the UI handles that
+                if result.get("type") == "generated_image":
+                    llm_result = {
+                        "success": result.get("success"),
+                        "type": "generated_image",
+                        "message": f"Image generated successfully. The image is being displayed to the user by the UI - do NOT try to show it with markdown or base64. Just acknowledge the image was created.",
+                        "prompt": result.get("prompt"),
+                        "width": result.get("width"),
+                        "height": result.get("height"),
+                        "seed": result.get("seed")
+                    }
+                # For youtube_results, keep metadata but could trim if needed
+                elif result.get("type") == "youtube_results":
+                    llm_result = result  # YouTube results are already reasonable size
+                else:
+                    llm_result = result
+                
                 messages.append({
                     "role": "tool",
-                    "content": json.dumps(tr["result"])
+                    "content": json.dumps(llm_result)
                 })
             
             # Final streaming response
@@ -601,7 +721,9 @@ class AgentSystem:
                             }
                         }
             except Exception as e:
-                yield {"type": "error", "data": {"message": str(e)}}
+                logger.error(f"Error during second LLM call: {e}")
+                yield {"type": "error", "data": {"message": f"Failed to generate response: {str(e)}"}}
+                return
         
         else:
             # No tool calls - stream the first response content
@@ -674,6 +796,7 @@ class AgentSystem:
         all_tools = {
             "web_search": "For current events, news, prices, recent information",
             "youtube_search": "To search and play YouTube videos - use when user wants to watch, play, or find videos",
+            "generate_image": "To create AI-generated images - use when user asks to create, generate, draw, or make an image/picture/artwork",
             "document_search": "To find info in user's uploaded documents",
             "memory_recall": "To remember things about this user",
             "memory_store": "To save important info about the user (name, preferences, etc)",

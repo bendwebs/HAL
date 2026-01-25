@@ -111,6 +111,38 @@ class ToolExecutor:
                     },
                     "required": ["query"]
                 }
+            },
+            "generate_image": {
+                "name": "generate_image",
+                "display_name": "Generate Image",
+                "description": "Generate images using Stable Diffusion AI. Create artwork, illustrations, photos, and more from text descriptions.",
+                "icon": "🎨",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Detailed description of the image to generate. Be specific about style, lighting, composition, colors, etc."
+                        },
+                        "negative_prompt": {
+                            "type": "string",
+                            "description": "Things to avoid in the image (e.g., 'blurry, low quality, distorted')"
+                        },
+                        "width": {
+                            "type": "integer",
+                            "description": "Image width in pixels (default 512, max 1024)"
+                        },
+                        "height": {
+                            "type": "integer",
+                            "description": "Image height in pixels (default 512, max 1024)"
+                        },
+                        "steps": {
+                            "type": "integer",
+                            "description": "Number of generation steps (default 20, more = better quality but slower)"
+                        }
+                    },
+                    "required": ["prompt"]
+                }
             }
         }
     

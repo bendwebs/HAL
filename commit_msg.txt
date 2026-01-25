@@ -1,6 +1,4 @@
-Auto-generate titles for voice conversations
+fix: run curl in ThreadPoolExecutor to avoid blocking async event loop
 
-- Extend auto-title generation to include "Voice Conversation" chats
-- Previously only "New Chat" titles were auto-generated
-- Title is generated after first message exchange using the LLM
-- Frontend already handles title_updated events, no changes needed
+The blocking subprocess.run call may be interfering with the async
+event loop. Running it in a thread pool should isolate it completely.

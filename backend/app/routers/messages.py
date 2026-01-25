@@ -8,6 +8,9 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, AsyncGenerator
 import json
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.database import database
 from app.auth import get_current_user
@@ -16,8 +19,61 @@ from app.models.message import (
     MessageAction, ActionType, ActionStatus, TokenUsage, StreamChunk
 )
 from app.models.chat import ChatVisibility, SharePermission
+from app.models.tool import ToolPermissionLevel
+from app.models.user import UserRole
 
 router = APIRouter(prefix="/chats/{chat_id}/messages", tags=["Messages"])
+
+
+async def get_allowed_tools(user: Dict[str, Any], requested_tools: Optional[List[str]] = None) -> Optional[List[str]]:
+    """Filter tools based on admin permission levels.
+    
+    This ensures that even if a chat has a DISABLED tool in its enabled_tools list,
+    it won't be passed to the agent. Admin permissions always take precedence.
+    
+    Args:
+        user: Current user dict
+        requested_tools: List of tool names from chat.enabled_tools (or None for defaults)
+    
+    Returns:
+        Filtered list of tool names that the user is actually allowed to use
+    """
+    if requested_tools is None:
+        # If no tools specified, return None to let agent use defaults
+        # But we still need to filter out DISABLED tools from defaults
+        requested_tools = [
+            "web_search", "youtube_search", "generate_image", 
+            "document_search", "memory_recall", "memory_store", "calculator"
+        ]
+    
+    is_admin = user.get("role") == UserRole.ADMIN
+    
+    # Get all tools with their permission levels from database
+    tools = await database.tools.find(
+        {"name": {"$in": requested_tools}}
+    ).to_list(100)
+    
+    tool_permissions = {t["name"]: t.get("permission_level", ToolPermissionLevel.USER_TOGGLE) for t in tools}
+    
+    allowed = []
+    for tool_name in requested_tools:
+        perm = tool_permissions.get(tool_name, ToolPermissionLevel.USER_TOGGLE)
+        
+        # DISABLED tools are never available to anyone
+        if perm == ToolPermissionLevel.DISABLED:
+            logger.info(f"[TOOL FILTER] Tool '{tool_name}' is DISABLED - excluding from chat (applies to all users)")
+            continue
+        
+        # ADMIN_ONLY tools only available to admins
+        if perm == ToolPermissionLevel.ADMIN_ONLY and not is_admin:
+            logger.info(f"[TOOL FILTER] Tool '{tool_name}' is ADMIN_ONLY - excluding for non-admin user")
+            continue
+        
+        # All other permission levels: USER_TOGGLE, OPT_IN, ALWAYS_ON are allowed
+        allowed.append(tool_name)
+    
+    logger.info(f"[TOOL FILTER] Requested: {requested_tools}, Allowed: {allowed}")
+    return allowed if allowed else None
 
 
 async def get_chat_with_permission(chat_id: str, user: Dict[str, Any], require_write: bool = False):
@@ -137,6 +193,10 @@ async def send_message(
     
     agent_system = get_agent_system()
     
+    # Filter tools based on admin permissions - this is the key fix
+    # Even if chat.enabled_tools contains a DISABLED tool, it will be filtered out
+    allowed_tools = await get_allowed_tools(current_user, chat.get("enabled_tools"))
+    
     if stream:
         # Streaming response
         async def generate() -> AsyncGenerator[str, None]:
@@ -157,7 +217,7 @@ async def send_message(
                     persona_id=str(chat.get("persona_id")) if chat.get("persona_id") else None,
                     model_override=chat.get("model_override"),
                     voice_mode=chat.get("voice_mode", False),
-                    enabled_tools=chat.get("enabled_tools")  # Pass per-chat tool settings
+                    enabled_tools=allowed_tools  # Use filtered tools
                 ):
                     # Update full response for saving
                     if chunk["type"] == "thinking":
@@ -166,6 +226,7 @@ async def send_message(
                         full_response["content"] += chunk["data"].get("delta", "")
                     elif chunk["type"] == "action_complete":
                         full_response["actions"].append(chunk["data"])
+                        logger.info(f"[SSE] Yielding action_complete for {chunk['data'].get('name')}, status={chunk['data'].get('status')}")
                     elif chunk["type"] == "done":
                         full_response["model_used"] = chunk["data"].get("model")
                         full_response["token_usage"] = chunk["data"].get("token_usage")
@@ -309,7 +370,7 @@ async def send_message(
             persona_id=str(chat.get("persona_id")) if chat.get("persona_id") else None,
             model_override=chat.get("model_override"),
             voice_mode=chat.get("voice_mode", False),
-            enabled_tools=chat.get("enabled_tools")
+            enabled_tools=allowed_tools  # Use filtered tools
         )
         
         # Save assistant message

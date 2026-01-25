@@ -2,7 +2,7 @@
  * API Client for HAL Backend
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Debug log - will show in browser console
 if (typeof window !== 'undefined') {
@@ -211,20 +211,47 @@ export const messages = {
     
     if (!reader) return;
     
+    let buffer = '';  // Buffer for incomplete lines
+    
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
+      // Append new data to buffer
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Process complete lines
+      const lines = buffer.split('\n');
+      
+      // Keep the last line in buffer if it's incomplete (doesn't end with newline)
+      buffer = lines.pop() || '';
       
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6));
+            // Debug: log action_complete events
+            if (data.type === 'action_complete') {
+              console.log('[API Stream] action_complete received:', data);
+            }
             yield data;
-          } catch {}
+          } catch (e) {
+            console.warn('[API Stream] Failed to parse SSE line:', line.slice(0, 100), e);
+          }
         }
+      }
+    }
+    
+    // Process any remaining data in buffer
+    if (buffer.startsWith('data: ')) {
+      try {
+        const data = JSON.parse(buffer.slice(6));
+        if (data.type === 'action_complete') {
+          console.log('[API Stream] action_complete received (final):', data);
+        }
+        yield data;
+      } catch (e) {
+        console.warn('[API Stream] Failed to parse final SSE data:', buffer.slice(0, 100), e);
       }
     }
   },
@@ -651,6 +678,108 @@ export const stt = {
     
     return response.json();
   },
+};
+
+// Image Generation API
+export const imageGen = {
+  /**
+   * Get SD status and available models/samplers
+   */
+  getStatus: () =>
+    request<{
+      available: boolean;
+      api_url: string;
+      message: string;
+      auto_start_configured: boolean;
+      sd_path?: string;
+      subprocess_running: boolean;
+      starting: boolean;
+      models?: string[];
+      samplers?: string[];
+    }>('/api/images/sd/status'),
+
+  /**
+   * Start Stable Diffusion server
+   */
+  start: () =>
+    request<{ success: boolean; message?: string; error?: string }>('/api/images/sd/start', {
+      method: 'POST',
+    }),
+
+  /**
+   * Stop Stable Diffusion server
+   */
+  stop: () =>
+    request<{ success: boolean; message?: string }>('/api/images/sd/stop', {
+      method: 'POST',
+    }),
+
+  /**
+   * Generate an image
+   */
+  generate: (params: {
+    prompt: string;
+    negative_prompt?: string;
+    width?: number;
+    height?: number;
+    steps?: number;
+    cfg_scale?: number;
+    sampler_name?: string;
+    seed?: number;
+    batch_size?: number;
+  }) =>
+    request<{
+      success: boolean;
+      images?: Array<{
+        filename: string;
+        url: string;
+      }>;
+      prompt?: string;
+      negative_prompt?: string;
+      seed?: number;
+      steps?: number;
+      cfg_scale?: number;
+      sampler?: string;
+      width?: number;
+      height?: number;
+      generation_time_ms?: number;
+      error?: string;
+    }>('/api/images/generate', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  /**
+   * List user's generated images
+   */
+  listMyImages: () =>
+    request<{
+      images: Array<{
+        filename: string;
+        url: string;
+        created_at: number;
+      }>;
+    }>('/api/images/my-images'),
+
+  /**
+   * Delete a generated image
+   */
+  deleteImage: (filename: string) =>
+    request<{ message: string; filename: string }>(`/api/images/generated/${filename}`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Get available models
+   */
+  getModels: () =>
+    request<{ success: boolean; models?: string[]; error?: string }>('/api/images/sd/models'),
+
+  /**
+   * Get available samplers
+   */
+  getSamplers: () =>
+    request<{ success: boolean; samplers?: string[]; error?: string }>('/api/images/sd/samplers'),
 };
 
 export { ApiError };

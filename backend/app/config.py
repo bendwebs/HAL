@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     whisper_device: str = "cuda"  # cuda or cpu
     whisper_compute_type: str = "float16"  # float16, int8, int8_float16
     
+    # Stable Diffusion (Automatic1111 API)
+    sd_api_url: str = "http://127.0.0.1:7860"
+    sd_default_steps: int = 20
+    sd_default_cfg: float = 7.0
+    sd_default_sampler: str = "DPM++ 2M Karras"
+    sd_webui_path: Optional[str] = None  # Path to Automatic1111 webui folder
+    sd_startup_timeout: int = 120  # Seconds to wait for SD to start
+    
     # Server
     api_prefix: str = "/api"
     debug: bool = True

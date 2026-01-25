@@ -125,6 +125,7 @@ from app.routers.web_search import router as web_search_router
 from app.routers.voice_settings import router as voice_settings_router
 from app.routers.youtube import router as youtube_router
 from app.routers.stt import router as stt_router
+from app.routers.images import router as images_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -140,6 +141,7 @@ app.include_router(web_search_router, prefix="/api")
 app.include_router(voice_settings_router, prefix="/api")
 app.include_router(youtube_router, prefix="/api")
 app.include_router(stt_router, prefix="/api")
+app.include_router(images_router, prefix="/api")
 
 
 # Health check endpoint
