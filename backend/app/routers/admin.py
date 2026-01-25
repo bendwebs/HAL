@@ -4,6 +4,9 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query
 from bson import ObjectId
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.database import database
 from app.auth import get_current_admin, hash_password
@@ -142,12 +145,16 @@ async def admin_update_tool(
     update_data = update.model_dump(exclude_unset=True)
     updates.update(update_data)
     
-    await database.tools.update_one(
+    logger.info(f"[ADMIN TOOL UPDATE] tool_id={tool_id}, tool_name={tool.get('name')}, update_data={update_data}, final_updates={updates}")
+    
+    result = await database.tools.update_one(
         {"_id": ObjectId(tool_id)},
         {"$set": updates}
     )
     
-    return {"message": "Tool updated"}
+    logger.info(f"[ADMIN TOOL UPDATE] MongoDB result: matched={result.matched_count}, modified={result.modified_count}")
+    
+    return {"message": "Tool updated", "updates_applied": update_data}
 
 
 # ============== Alert Management ==============

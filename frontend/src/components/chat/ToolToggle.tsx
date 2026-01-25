@@ -5,7 +5,7 @@ import { Chat, Tool } from '@/types';
 import { tools as toolsApi, chats as chatsApi } from '@/lib/api';
 import { 
   Wrench, ChevronDown, Check, Globe, FileSearch,
-  Brain, Calculator, Save, Youtube, ImageIcon, Bot
+  Brain, Calculator, Save, Youtube, ImageIcon, Bot, AlertCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -71,7 +71,24 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
     }
   };
 
+  // Filter to only show tools that are available to the user
+  // (Admin-disabled tools won't appear in the API response at all now)
+  // This also filters out tools the user can't toggle (like ALWAYS_ON or ADMIN_ONLY)
+  const availableTools = tools.filter(tool => {
+    // Show all tools that came from the API - admin-disabled ones are already filtered out server-side
+    // But we also want to show non-toggleable tools (like ALWAYS_ON) as read-only indicators
+    return true;
+  });
+
   const toggleTool = async (toolName: string) => {
+    // Find the tool to check if it can be toggled
+    const tool = tools.find(t => t.name === toolName);
+    if (tool && !tool.can_toggle) {
+      // Tool cannot be toggled (e.g., ALWAYS_ON, ADMIN_ONLY)
+      toast.error(`This tool cannot be toggled`);
+      return;
+    }
+    
     const newEnabled = enabledTools.includes(toolName)
       ? enabledTools.filter(t => t !== toolName)
       : [...enabledTools, toolName];
@@ -91,7 +108,12 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
   };
 
   const enableAll = async () => {
-    const allToolNames = tools.map(t => t.name);
+    // Only enable tools that can be toggled
+    const toggleableTools = tools.filter(t => t.can_toggle).map(t => t.name);
+    // Also include ALWAYS_ON tools
+    const alwaysOnTools = tools.filter(t => !t.can_toggle && t.is_enabled).map(t => t.name);
+    const allToolNames = [...toggleableTools, ...alwaysOnTools];
+    
     setEnabledTools(allToolNames);
     try {
       const updated = await chatsApi.update(chat.id, { enabled_tools: allToolNames });
@@ -102,23 +124,29 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
   };
 
   const disableAll = async () => {
-    setEnabledTools([]);
+    // Keep ALWAYS_ON tools enabled
+    const alwaysOnTools = tools.filter(t => !t.can_toggle && t.is_enabled).map(t => t.name);
+    
+    setEnabledTools(alwaysOnTools);
     try {
-      const updated = await chatsApi.update(chat.id, { enabled_tools: [] });
+      const updated = await chatsApi.update(chat.id, { enabled_tools: alwaysOnTools });
       onUpdate(updated);
     } catch (err) {
       toast.error('Failed to update tools');
     }
   };
 
-  const enabledCount = enabledTools.length;
-  const totalCount = tools.length || DEFAULT_ENABLED_TOOLS.length;
+  // Calculate counts based on toggleable tools only
+  const toggleableTools = availableTools.filter(t => t.can_toggle);
+  const enabledToggleable = toggleableTools.filter(t => enabledTools.includes(t.name));
+  const enabledCount = enabledToggleable.length;
+  const totalCount = toggleableTools.length;
   const disabledCount = totalCount - enabledCount;
 
   // Sort tools: enabled first, then alphabetically
-  const sortedTools = [...tools].sort((a, b) => {
-    const aEnabled = enabledTools.includes(a.name);
-    const bEnabled = enabledTools.includes(b.name);
+  const sortedTools = [...availableTools].sort((a, b) => {
+    const aEnabled = enabledTools.includes(a.name) || (!a.can_toggle && a.is_enabled);
+    const bEnabled = enabledTools.includes(b.name) || (!b.can_toggle && b.is_enabled);
     if (aEnabled && !bEnabled) return -1;
     if (!aEnabled && bEnabled) return 1;
     return a.display_name.localeCompare(b.display_name);
@@ -155,24 +183,51 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
               <p className="text-xs text-text-muted">Toggle which tools HAL can use</p>
             </div>
             
+            {sortedTools.length === 0 && (
+              <div className="px-3 py-4 text-center text-text-muted text-sm">
+                Loading tools...
+              </div>
+            )}
+            
             {sortedTools.map(tool => {
               const Icon = TOOL_ICONS[tool.name] || Wrench;
-              const isEnabled = enabledTools.includes(tool.name);
+              const isEnabled = enabledTools.includes(tool.name) || (!tool.can_toggle && tool.is_enabled);
+              const canToggle = tool.can_toggle;
               const description = TOOL_DESCRIPTIONS[tool.name] || tool.description || '';
+              
+              // Determine status label for non-toggleable tools
+              let statusLabel = null;
+              if (!canToggle && tool.is_enabled) {
+                statusLabel = 'Always On';
+              } else if (!canToggle && !tool.is_enabled) {
+                statusLabel = 'Admin Only';
+              }
               
               return (
                 <button
                   key={tool.name}
-                  onClick={() => toggleTool(tool.name)}
-                  className="w-full px-3 py-2 flex items-center gap-3 hover:bg-surface transition-colors"
+                  onClick={() => canToggle && toggleTool(tool.name)}
+                  disabled={!canToggle}
+                  className={`w-full px-3 py-2 flex items-center gap-3 transition-colors ${
+                    canToggle 
+                      ? 'hover:bg-surface cursor-pointer' 
+                      : 'cursor-not-allowed opacity-75'
+                  }`}
                 >
                   <div className={`p-1.5 rounded ${isEnabled ? 'bg-accent/10 text-accent' : 'bg-surface text-text-muted'}`}>
                     <Icon className="w-4 h-4" />
                   </div>
                   <div className="flex-1 text-left min-w-0">
-                    <p className={`text-sm ${isEnabled ? 'text-text-primary' : 'text-text-muted line-through'}`}>
-                      {tool.display_name}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className={`text-sm ${isEnabled ? 'text-text-primary' : 'text-text-muted line-through'}`}>
+                        {tool.display_name}
+                      </p>
+                      {statusLabel && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-surface text-text-muted">
+                          {statusLabel}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-text-muted truncate">
                       {description}
                     </p>
@@ -186,26 +241,22 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
               );
             })}
             
-            {tools.length === 0 && (
-              <div className="px-3 py-4 text-center text-text-muted text-sm">
-                Loading tools...
+            {toggleableTools.length > 0 && (
+              <div className="px-3 pt-2 mt-2 border-t border-border flex gap-2">
+                <button
+                  onClick={enableAll}
+                  className="flex-1 text-xs text-text-secondary hover:text-text-primary py-1"
+                >
+                  Enable All
+                </button>
+                <button
+                  onClick={disableAll}
+                  className="flex-1 text-xs text-text-secondary hover:text-text-primary py-1"
+                >
+                  Disable All
+                </button>
               </div>
             )}
-            
-            <div className="px-3 pt-2 mt-2 border-t border-border flex gap-2">
-              <button
-                onClick={enableAll}
-                className="flex-1 text-xs text-text-secondary hover:text-text-primary py-1"
-              >
-                Enable All
-              </button>
-              <button
-                onClick={disableAll}
-                className="flex-1 text-xs text-text-secondary hover:text-text-primary py-1"
-              >
-                Disable All
-              </button>
-            </div>
             
             {disabledCount > 0 && (
               <div className="px-3 pt-2 mt-2 border-t border-border">

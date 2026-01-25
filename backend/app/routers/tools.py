@@ -4,6 +4,9 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from bson import ObjectId
 from datetime import datetime
 from typing import Dict, Any, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.database import database
 from app.auth import get_current_user
@@ -17,7 +20,11 @@ router = APIRouter(prefix="/tools", tags=["Tools"])
 async def list_tools(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """List tools with user's permission state"""
+    """List tools available for use in chats.
+    
+    DISABLED tools are hidden from everyone (including admins) - they cannot be used.
+    ADMIN_ONLY tools are only shown to admins.
+    """
     user_id = current_user["_id"]
     is_admin = current_user.get("role") == UserRole.ADMIN
     user_overrides = current_user.get("settings", {}).get("tool_overrides", {})
@@ -28,12 +35,20 @@ async def list_tools(
     for tool in tools:
         perm = tool.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
         
-        # Determine if tool is enabled for this user
+        # DISABLED tools are hidden from EVERYONE - they cannot be used at all
         if perm == ToolPermissionLevel.DISABLED:
-            is_enabled = False
-            can_toggle = False
-        elif perm == ToolPermissionLevel.ADMIN_ONLY:
-            is_enabled = is_admin
+            logger.debug(f"[TOOLS] Hiding DISABLED tool '{tool['name']}' - not available to anyone")
+            continue
+        
+        # ADMIN_ONLY tools are only shown to admins
+        if perm == ToolPermissionLevel.ADMIN_ONLY and not is_admin:
+            logger.debug(f"[TOOLS] Hiding ADMIN_ONLY tool '{tool['name']}' from non-admin user")
+            continue
+        
+        # Determine if tool is enabled for this user
+        if perm == ToolPermissionLevel.ADMIN_ONLY:
+            # Only admins reach here - enabled for admin
+            is_enabled = True
             can_toggle = False
         elif perm == ToolPermissionLevel.ALWAYS_ON:
             is_enabled = True
@@ -66,6 +81,7 @@ async def list_tools(
             can_toggle=can_toggle
         ))
     
+    logger.info(f"[TOOLS] Returning {len(result)} tools to user (is_admin={is_admin})")
     return result
 
 
