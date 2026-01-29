@@ -49,6 +49,7 @@ class ChatUpdate(BaseModel):
     tts_voice_id: Optional[str] = None
     voice_mode: Optional[bool] = None
     enabled_tools: Optional[List[str]] = None
+    is_pinned: Optional[bool] = None
 
 
 class ShareRequest(BaseModel):
@@ -108,3 +109,6 @@ class ChatListResponse(BaseModel):
     updated_at: datetime
     is_owner: bool
     message_count: int = 0
+    is_pinned: bool = False
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None

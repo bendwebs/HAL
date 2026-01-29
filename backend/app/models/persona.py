@@ -14,6 +14,7 @@ class PersonaBase(BaseModel):
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     model_override: Optional[str] = None
     tools_enabled: List[str] = Field(default_factory=list)
+    default_voice_id: Optional[str] = None  # TTS voice for this persona
 
 
 class PersonaCreate(PersonaBase):
@@ -31,6 +32,7 @@ class PersonaUpdate(BaseModel):
     model_override: Optional[str] = None
     tools_enabled: Optional[List[str]] = None
     is_public: Optional[bool] = None
+    default_voice_id: Optional[str] = None
 
 
 class PersonaInDB(PersonaBase):
@@ -56,10 +58,13 @@ class PersonaResponse(BaseModel):
     temperature: float
     model_override: Optional[str]
     tools_enabled: List[str]
+    default_voice_id: Optional[str]
     creator_id: Optional[str]
     is_public: bool
     is_system: bool
     created_at: datetime
+    usage_count: int = 0
+    last_used: Optional[datetime] = None
     
     # Computed
     is_owner: bool = False
@@ -72,6 +77,10 @@ class PersonaListResponse(BaseModel):
     description: str
     avatar_emoji: str
     temperature: float = 0.7
+    model_override: Optional[str] = None
+    default_voice_id: Optional[str] = None
     is_public: bool
     is_system: bool
     is_owner: bool
+    usage_count: int = 0
+    last_used: Optional[datetime] = None

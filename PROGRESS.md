@@ -191,8 +191,6 @@ Last Updated: 2025-01-22
 - [ ] Mobile optimization
 - [ ] Error handling improvements
 - [ ] Performance optimization
-- [ ] Unit tests
-- [ ] Integration tests
 
 ---
 
@@ -206,6 +204,49 @@ Last Updated: 2025-01-22
 ---
 
 ## Changelog
+
+### 2025-01-29
+- **Context Window Manager**:
+  - New context management system for tracking token usage
+  - Visual progress bar showing tokens used vs model's max context
+  - Message grouping by conversation segments
+  - AI-powered summarization of message groups
+  - Ability to delete old message groups to free context space
+  - Shows breakdown: system prompt tokens, message tokens
+  - Model context limits for common Ollama models (qwen3, llama3, etc.)
+  - New backend endpoints: /api/context/model-info, /api/context/chat/{id}/analysis
+  - New component: ContextWindowManager in chat header
+  - Warning when context usage exceeds 75%
+
+### 2025-01-28
+- **Persona System Enhancements**:
+  - Enlarged persona modal (max-w-4xl) for better editing experience
+  - Added AI-assisted system prompt builder using Ollama
+  - Interactive conversation to gather persona details
+  - Auto-generates comprehensive system prompts
+  - New API endpoint: /api/personas/ai-assist
+  - **Voice Association**: Link a TTS voice to each persona (default_voice_id)
+  - **Model Override UI**: Dropdown to select specific Ollama model per persona
+  - **Test Chat**: Mini chat panel to test persona responses before saving
+  - Personas now sorted by usage (most used first)
+  - Cards show model, voice indicators
+  - Larger system prompt textarea (responsive height)
+  - New API endpoints: /api/personas/test-chat, /api/personas/{id}/use
+- **Sidebar Chat List Improvements**:
+  - Removed 10-chat limit - now shows all chats (up to 500)
+  - Added chat pinning feature (pin/unpin via right-click or menu)
+  - Pinned chats appear at top of list with pin icon
+  - Context menu for chat actions (pin, delete)
+  - Backend support for is_pinned field on chats
+- **Chat Recycle Bin**:
+  - In-app delete confirmation modal
+  - Soft delete moves chats to recycle bin instead of permanent delete
+  - Recycle bin accessible from sidebar
+  - Restore deleted chats with one click
+  - Permanently delete individual chats or empty entire bin
+  - New API endpoints: /api/chats/{id}/restore, /api/chats/recycle-bin/empty
+  - Added is_deleted and deleted_at fields to chats
+- **Default Model**: Changed to qwen3:14b for better tool calling and reasoning
 
 ### 2025-01-23
 - Added faster-whisper STT backend service for local GPU transcription

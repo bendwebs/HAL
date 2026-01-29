@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
-    default_chat_model: str = "qwen2.5:7b"
+    default_chat_model: str = "qwen3:8b-8k"
     default_embed_model: str = "nomic-embed-text"
     
     # File Upload

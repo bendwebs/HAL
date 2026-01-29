@@ -77,6 +77,9 @@ export interface ChatListItem {
   updated_at: string;
   is_owner: boolean;
   message_count: number;
+  is_pinned: boolean;
+  is_deleted: boolean;
+  deleted_at: string | null;
 }
 
 // Message types

@@ -143,6 +143,10 @@ app.include_router(youtube_router, prefix="/api")
 app.include_router(stt_router, prefix="/api")
 app.include_router(images_router, prefix="/api")
 
+# Context management router
+from app.routers.context import router as context_router
+app.include_router(context_router, prefix="/api")
+
 
 # Health check endpoint
 @app.get("/health")

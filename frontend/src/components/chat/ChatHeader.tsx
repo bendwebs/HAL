@@ -21,6 +21,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import ContextWindowManager from './ContextWindowManager';
 
 interface ChatHeaderProps {
   chat: Chat;
@@ -237,6 +238,16 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
             <VisibilityIcon className="w-4 h-4" />
             <span className="text-xs capitalize hidden sm:inline">{chat.visibility}</span>
           </div>
+          
+          {/* Context Window Manager */}
+          <ContextWindowManager 
+            chatId={chat.id} 
+            model={chat.model_override || 'default'}
+            onMessagesDeleted={() => {
+              // Could trigger a refresh of messages if needed
+              refreshChatList();
+            }}
+          />
           
           {chat.is_owner && (
             <div className="relative">

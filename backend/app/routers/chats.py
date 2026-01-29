@@ -56,6 +56,7 @@ async def list_chats(
     current_user: Dict[str, Any] = Depends(get_current_user),
     include_shared: bool = Query(True),
     include_public: bool = Query(False),
+    include_deleted: bool = Query(False),
 ):
     """List user's chats"""
     user_id = current_user["_id"]
@@ -74,10 +75,16 @@ async def list_chats(
     
     query = {"$or": query_conditions} if len(query_conditions) > 1 else query_conditions[0]
     
-    # Get chats with message count
+    # Filter by deleted status
+    if include_deleted:
+        query = {"$and": [query, {"is_deleted": True}]}
+    else:
+        query = {"$and": [query, {"$or": [{"is_deleted": False}, {"is_deleted": {"$exists": False}}]}]}
+    
+    # Get chats with message count - sort by pinned first, then by updated_at
     pipeline = [
         {"$match": query},
-        {"$sort": {"updated_at": -1}},
+        {"$sort": {"is_pinned": -1, "updated_at": -1}},
         {"$lookup": {
             "from": "messages",
             "localField": "_id",
@@ -88,7 +95,7 @@ async def list_chats(
         {"$project": {"messages": 0}}
     ]
     
-    chats = await database.chats.aggregate(pipeline).to_list(100)
+    chats = await database.chats.aggregate(pipeline).to_list(500)
     
     return [
         ChatListResponse(
@@ -98,7 +105,10 @@ async def list_chats(
             persona_id=str(chat["persona_id"]) if chat.get("persona_id") else None,
             updated_at=chat["updated_at"],
             is_owner=str(chat["user_id"]) == user_id,
-            message_count=chat.get("message_count", 0)
+            message_count=chat.get("message_count", 0),
+            is_pinned=chat.get("is_pinned", False),
+            is_deleted=chat.get("is_deleted", False),
+            deleted_at=chat.get("deleted_at")
         )
         for chat in chats
     ]
@@ -130,6 +140,16 @@ async def create_chat(
     
     result = await database.chats.insert_one(chat_doc)
     chat_id = str(result.inserted_id)
+    
+    # Track persona usage if a persona was selected
+    if chat_data.persona_id:
+        await database.personas.update_one(
+            {"_id": ObjectId(chat_data.persona_id)},
+            {
+                "$inc": {"usage_count": 1},
+                "$set": {"last_used": now}
+            }
+        )
     
     return ChatResponse(
         id=chat_id,
@@ -229,6 +249,8 @@ async def update_chat(
         updates["voice_mode"] = update.voice_mode
     if update.enabled_tools is not None:
         updates["enabled_tools"] = update.enabled_tools
+    if update.is_pinned is not None:
+        updates["is_pinned"] = update.is_pinned
     
     await database.chats.update_one(
         {"_id": ObjectId(chat_id)},
@@ -241,19 +263,86 @@ async def update_chat(
 @router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat(
     chat_id: str,
+    permanent: bool = Query(False),
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Delete chat (owner only)"""
+    """Soft delete chat (moves to recycle bin) or permanently delete if permanent=true"""
     chat = await get_chat_with_permission(chat_id, current_user)
     
     if str(chat["user_id"]) != current_user["_id"]:
         raise HTTPException(status_code=403, detail="Only owner can delete chat")
     
-    # Delete messages
-    await database.messages.delete_many({"chat_id": ObjectId(chat_id)})
+    if permanent:
+        # Permanent delete - remove messages and chat
+        await database.messages.delete_many({"chat_id": ObjectId(chat_id)})
+        await database.chats.delete_one({"_id": ObjectId(chat_id)})
+    else:
+        # Soft delete - mark as deleted
+        await database.chats.update_one(
+            {"_id": ObjectId(chat_id)},
+            {"$set": {
+                "is_deleted": True,
+                "deleted_at": datetime.utcnow(),
+                "is_pinned": False  # Unpin when deleting
+            }}
+        )
+
+
+@router.post("/{chat_id}/restore", response_model=ChatResponse)
+async def restore_chat(
+    chat_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Restore a soft-deleted chat from the recycle bin"""
+    try:
+        chat = await database.chats.find_one({"_id": ObjectId(chat_id)})
+    except:
+        raise HTTPException(status_code=404, detail="Chat not found")
     
-    # Delete chat
-    await database.chats.delete_one({"_id": ObjectId(chat_id)})
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    
+    if str(chat["user_id"]) != current_user["_id"]:
+        raise HTTPException(status_code=403, detail="Only owner can restore chat")
+    
+    if not chat.get("is_deleted"):
+        raise HTTPException(status_code=400, detail="Chat is not deleted")
+    
+    await database.chats.update_one(
+        {"_id": ObjectId(chat_id)},
+        {"$set": {
+            "is_deleted": False,
+            "deleted_at": None,
+            "updated_at": datetime.utcnow()
+        }}
+    )
+    
+    return await get_chat(chat_id, current_user)
+
+
+@router.delete("/recycle-bin/empty", status_code=status.HTTP_200_OK)
+async def empty_recycle_bin(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Permanently delete all chats in the recycle bin"""
+    user_id = current_user["_id"]
+    
+    # Find all deleted chats for this user
+    deleted_chats = await database.chats.find({
+        "user_id": ObjectId(user_id),
+        "is_deleted": True
+    }).to_list(1000)
+    
+    deleted_count = 0
+    for chat in deleted_chats:
+        chat_id = chat["_id"]
+        # Delete messages
+        await database.messages.delete_many({"chat_id": chat_id})
+        # Delete chat
+        await database.chats.delete_one({"_id": chat_id})
+        deleted_count += 1
+    
+    return {"deleted": deleted_count, "message": f"Permanently deleted {deleted_count} chats"}
 
 
 @router.get("/analysis/stats")

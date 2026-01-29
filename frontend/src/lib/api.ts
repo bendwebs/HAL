@@ -89,8 +89,11 @@ export const auth = {
 
 // Chats API
 export const chats = {
-  list: (includeShared = true, includePublic = false) =>
-    request<any[]>(`/api/chats?include_shared=${includeShared}&include_public=${includePublic}`),
+  list: (includeShared = true, includePublic = false, includeDeleted = false) =>
+    request<any[]>(`/api/chats?include_shared=${includeShared}&include_public=${includePublic}&include_deleted=${includeDeleted}`),
+  
+  listDeleted: () =>
+    request<any[]>('/api/chats?include_deleted=true'),
     
   get: (id: string) => request<any>(`/api/chats/${id}`),
   
@@ -107,14 +110,21 @@ export const chats = {
     tts_voice_id?: string;
     voice_mode?: boolean;
     enabled_tools?: string[];
+    is_pinned?: boolean;
   }) =>
     request<any>(`/api/chats/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
     
-  delete: (id: string) =>
-    request<void>(`/api/chats/${id}`, { method: 'DELETE' }),
+  delete: (id: string, permanent = false) =>
+    request<void>(`/api/chats/${id}?permanent=${permanent}`, { method: 'DELETE' }),
+  
+  restore: (id: string) =>
+    request<any>(`/api/chats/${id}/restore`, { method: 'POST' }),
+  
+  emptyRecycleBin: () =>
+    request<{ deleted: number; message: string }>('/api/chats/recycle-bin/empty', { method: 'DELETE' }),
   
   bulkDelete: (options: { titleFilter?: string; deleteEmptyOnly?: boolean; chatIds?: string[] }) =>
     request<{ deleted: number; skipped: number; message: string }>(
@@ -310,6 +320,15 @@ export const personas = {
     
   delete: (id: string) =>
     request<void>(`/api/personas/${id}`, { method: 'DELETE' }),
+  
+  testChat: (data: { system_prompt: string; message: string; temperature?: number; model_override?: string }) =>
+    request<{ response: string; model_used: string }>('/api/personas/test-chat', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  
+  recordUsage: (id: string) =>
+    request<{ success: boolean }>(`/api/personas/${id}/use`, { method: 'POST' }),
 };
 
 // Memories API (Mem0-powered)
@@ -463,6 +482,58 @@ export const admin = {
 // Models API
 export const models = {
   list: () => request<{ models: any[]; default_chat: string; default_embed: string }>('/api/models'),
+};
+
+// Context Management API
+export interface MessageGroup {
+  id: string;
+  title: string;
+  summary: string;
+  message_ids: string[];
+  token_count: number;
+  start_time: string;
+  end_time: string;
+  message_count: number;
+}
+
+export interface ContextAnalysis {
+  total_tokens: number;
+  max_tokens: number;
+  usage_percent: number;
+  model: string;
+  message_count: number;
+  system_prompt_tokens: number;
+  messages_tokens: number;
+  groups: MessageGroup[];
+}
+
+export const context = {
+  getModelInfo: (modelName: string) =>
+    request<{
+      model: string;
+      context_length: number;
+      parameters: string | null;
+      template: string | null;
+      details: any;
+    }>(`/api/context/model-info/${encodeURIComponent(modelName)}`),
+  
+  analyzeChat: (chatId: string) =>
+    request<ContextAnalysis>(`/api/context/chat/${chatId}/analysis`),
+  
+  summarizeGroup: (chatId: string, groupId: string) =>
+    request<{
+      group_id: string;
+      summary: string;
+      message_count: number;
+      original_tokens: number;
+      summary_tokens: number;
+    }>(`/api/context/chat/${chatId}/summarize-group/${groupId}`, { method: 'POST' }),
+  
+  deleteMessages: (chatId: string, messageIds: string[]) =>
+    request<{ deleted: number; message: string }>(`/api/context/chat/${chatId}/messages`, {
+      method: 'DELETE',
+      body: JSON.stringify(messageIds),
+    }),
 };
 
 // TTS API (Chatterbox local TTS)
