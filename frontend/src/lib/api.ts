@@ -298,6 +298,15 @@ export const documents = {
   
   delete: (id: string) =>
     request<void>(`/api/documents/${id}`, { method: 'DELETE' }),
+    
+  // Get download URL (returns the URL, doesn't download)
+  getDownloadUrl: (id: string) => `${API_URL}/api/documents/${id}/download`,
+  
+  // Get preview URL for images
+  getPreviewUrl: (id: string) => `${API_URL}/api/documents/${id}/preview`,
+  
+  // Get preview data (for text files)
+  getPreview: (id: string) => request<any>(`/api/documents/${id}/preview`),
 };
 
 // Personas API
@@ -494,6 +503,7 @@ export interface MessageGroup {
   start_time: string;
   end_time: string;
   message_count: number;
+  is_summary?: boolean;
 }
 
 export interface ContextAnalysis {
@@ -505,6 +515,16 @@ export interface ContextAnalysis {
   system_prompt_tokens: number;
   messages_tokens: number;
   groups: MessageGroup[];
+}
+
+export interface SummarizePreview {
+  group_id: string;
+  summary: string;
+  original_tokens: number;
+  summary_tokens: number;
+  tokens_saved: number;
+  original_message_count: number;
+  messages_to_delete: string[];
 }
 
 export const context = {
@@ -520,14 +540,56 @@ export const context = {
   analyzeChat: (chatId: string) =>
     request<ContextAnalysis>(`/api/context/chat/${chatId}/analysis`),
   
-  summarizeGroup: (chatId: string, groupId: string) =>
+  // Preview summarization - shows what will change
+  previewSummarize: (chatId: string, groupId: string) =>
+    request<SummarizePreview>(`/api/context/chat/${chatId}/summarize-group/${groupId}/preview`, { method: 'POST' }),
+  
+  // Apply summarization - actually replaces messages with summary
+  // mode: "replace" = remove from chat UI, "context_only" = keep visible but exclude from AI context
+  applySummarize: (chatId: string, groupId: string, summary: string, messageIds: string[], mode: 'replace' | 'context_only' = 'replace') =>
     request<{
-      group_id: string;
+      success: boolean;
+      mode: string;
+      deleted_count?: number;
+      excluded_count?: number;
+      summary_message_id: string;
+      original_tokens: number;
+      new_tokens: number;
+      tokens_saved: number;
+    }>(`/api/context/chat/${chatId}/summarize-group/${groupId}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ summary, message_ids: messageIds, mode }),
+    }),
+  
+  // Legacy endpoint (now just calls preview)
+  summarizeGroup: (chatId: string, groupId: string) =>
+    request<SummarizePreview>(`/api/context/chat/${chatId}/summarize-group/${groupId}`, { method: 'POST' }),
+  
+  // Summarize ALL messages in the chat
+  previewSummarizeAll: (chatId: string) =>
+    request<{
       summary: string;
-      message_count: number;
       original_tokens: number;
       summary_tokens: number;
-    }>(`/api/context/chat/${chatId}/summarize-group/${groupId}`, { method: 'POST' }),
+      tokens_saved: number;
+      original_message_count: number;
+      message_ids: string[];
+    }>(`/api/context/chat/${chatId}/summarize-all/preview`, { method: 'POST' }),
+  
+  applySummarizeAll: (chatId: string, summary: string, messageIds: string[], mode: 'replace' | 'context_only' = 'replace') =>
+    request<{
+      success: boolean;
+      mode: string;
+      deleted_count?: number;
+      excluded_count?: number;
+      summary_message_id: string;
+      original_tokens: number;
+      new_tokens: number;
+      tokens_saved: number;
+    }>(`/api/context/chat/${chatId}/summarize-all/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ summary, message_ids: messageIds, mode }),
+    }),
   
   deleteMessages: (chatId: string, messageIds: string[]) =>
     request<{ deleted: number; message: string }>(`/api/context/chat/${chatId}/messages`, {

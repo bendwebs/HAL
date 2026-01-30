@@ -120,8 +120,14 @@ async def list_messages(
     user_id = current_user["_id"]
     is_owner = str(chat["user_id"]) == user_id
     
-    # Build query
-    query = {"chat_id": ObjectId(chat_id)}
+    # Build query - exclude messages hidden from UI
+    query = {
+        "chat_id": ObjectId(chat_id),
+        "$or": [
+            {"hidden_from_ui": {"$ne": True}},
+            {"hidden_from_ui": {"$exists": False}}
+        ]
+    }
     
     # Check if user should see history
     if not is_owner and not chat.get("share_includes_history", True):

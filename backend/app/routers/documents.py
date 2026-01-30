@@ -15,12 +15,18 @@ from app.models.document import DocumentResponse, DocumentListResponse
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
-ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.md', '.docx'}
+ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.md', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.csv', '.json'}
 ALLOWED_CONTENT_TYPES = {
     'application/pdf': '.pdf',
     'text/plain': '.txt',
     'text/markdown': '.md',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx'
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'text/csv': '.csv',
+    'application/json': '.json',
 }
 
 
@@ -181,3 +187,77 @@ async def delete_document(
     
     # Delete document
     await database.documents.delete_one({"_id": ObjectId(document_id)})
+
+
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Download the original document file"""
+    from fastapi.responses import FileResponse
+    
+    doc = await database.documents.find_one({
+        "_id": ObjectId(document_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    if not os.path.exists(doc["file_path"]):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    
+    return FileResponse(
+        path=doc["file_path"],
+        filename=doc["original_filename"],
+        media_type=doc["content_type"]
+    )
+
+
+@router.get("/{document_id}/preview")
+async def preview_document(
+    document_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Get document preview (for images, returns the image; for others, returns metadata)"""
+    from fastapi.responses import FileResponse
+    
+    doc = await database.documents.find_one({
+        "_id": ObjectId(document_id),
+        "user_id": ObjectId(current_user["_id"])
+    })
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    if not os.path.exists(doc["file_path"]):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    
+    content_type = doc["content_type"]
+    
+    # For images, return the file directly
+    if content_type.startswith("image/"):
+        return FileResponse(
+            path=doc["file_path"],
+            media_type=content_type
+        )
+    
+    # For text files, return content
+    if content_type in ["text/plain", "text/markdown", "text/csv", "application/json"]:
+        async with aiofiles.open(doc["file_path"], 'r', encoding='utf-8', errors='ignore') as f:
+            content = await f.read(10000)  # First 10KB
+            return {
+                "type": "text",
+                "content": content,
+                "truncated": len(content) >= 10000
+            }
+    
+    # For PDFs and other documents, return info only
+    return {
+        "type": "document",
+        "filename": doc["original_filename"],
+        "content_type": content_type,
+        "file_size": doc["file_size"],
+        "message": "Preview not available for this file type. Click download to view."
+    }

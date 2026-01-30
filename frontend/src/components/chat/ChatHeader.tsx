@@ -26,6 +26,7 @@ import ContextWindowManager from './ContextWindowManager';
 interface ChatHeaderProps {
   chat: Chat;
   onUpdate: (chat: Chat) => void;
+  contextRefreshTrigger?: number; // Pass to ContextWindowManager to trigger refresh
 }
 
 const visibilityIcons = {
@@ -34,7 +35,7 @@ const visibilityIcons = {
   public: Globe,
 };
 
-export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
+export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }: ChatHeaderProps) {
   const router = useRouter();
   const { refreshChatList } = useUIStore();
   const [isEditing, setIsEditing] = useState(false);
@@ -243,6 +244,7 @@ export default function ChatHeader({ chat, onUpdate }: ChatHeaderProps) {
           <ContextWindowManager 
             chatId={chat.id} 
             model={chat.model_override || 'default'}
+            refreshTrigger={contextRefreshTrigger}
             onMessagesDeleted={() => {
               // Could trigger a refresh of messages if needed
               refreshChatList();

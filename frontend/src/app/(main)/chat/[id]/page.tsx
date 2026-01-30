@@ -41,6 +41,7 @@ export default function ChatPage() {
   const [memoriesUsed, setMemoriesUsed] = useState<any[]>([]);
   const [pendingMemories, setPendingMemories] = useState<string[]>([]);
   const [isSavingMemories, setIsSavingMemories] = useState(false);
+  const [contextRefreshTrigger, setContextRefreshTrigger] = useState(0); // Trigger context window refresh
   const streamingMessageRef = useRef<Partial<Message> | null>(null);
   
   // YouTube video state
@@ -379,6 +380,8 @@ export default function ChatPage() {
         streamingMessageRef.current = null;
         setStreamingMessage(null);
         setMessages(msgs => [...msgs, finalMessage]);
+        // Trigger context window refresh after message is saved
+        setContextRefreshTrigger(prev => prev + 1);
         break;
         
       case 'error':
@@ -409,7 +412,7 @@ export default function ChatPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <ChatHeader chat={chat} onUpdate={setChat} />
+      <ChatHeader chat={chat} onUpdate={setChat} contextRefreshTrigger={contextRefreshTrigger} />
       
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-6">

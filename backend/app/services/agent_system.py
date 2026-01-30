@@ -520,6 +520,7 @@ class AgentSystem:
         # First call - with tools to see if model wants to use any
         tool_calls_to_execute = []
         first_response_content = ""
+        first_response_tokens = {"prompt": 0, "completion": 0, "total": 0}
         
         logger.info(f"[OLLAMA CALL] model={model}, tools_count={len(tools) if tools else 0}, tools_passed={tools is not None}")
         
@@ -534,6 +535,14 @@ class AgentSystem:
             
             msg = first_response.get("message", {})
             first_response_content = msg.get("content", "")
+            
+            # Capture token counts from first response
+            first_response_tokens = {
+                "prompt": first_response.get("prompt_eval_count", 0),
+                "completion": first_response.get("eval_count", 0),
+                "total": first_response.get("prompt_eval_count", 0) + first_response.get("eval_count", 0)
+            }
+            logger.info(f"[OLLAMA TOKENS] First call: {first_response_tokens}")
             
             logger.info(f"[OLLAMA RESPONSE] tool_calls={msg.get('tool_calls')}, content_preview={first_response_content[:100] if first_response_content else 'None'}...")
             
@@ -709,14 +718,17 @@ class AgentSystem:
                         yield {"type": "content", "data": {"delta": delta}}
                     
                     if chunk.get("done"):
+                        # Combine tokens from first call + second call
+                        second_prompt = chunk.get("prompt_eval_count", 0)
+                        second_completion = chunk.get("eval_count", 0)
                         yield {
                             "type": "done",
                             "data": {
                                 "model": model,
                                 "token_usage": {
-                                    "prompt": chunk.get("prompt_eval_count", 0),
-                                    "completion": chunk.get("eval_count", 0),
-                                    "total": chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0)
+                                    "prompt": first_response_tokens["prompt"] + second_prompt,
+                                    "completion": first_response_tokens["completion"] + second_completion,
+                                    "total": first_response_tokens["total"] + second_prompt + second_completion
                                 }
                             }
                         }
@@ -737,7 +749,7 @@ class AgentSystem:
                 "type": "done",
                 "data": {
                     "model": model,
-                    "token_usage": {"prompt": 0, "completion": 0, "total": 0}
+                    "token_usage": first_response_tokens
                 }
             }
 
@@ -790,14 +802,16 @@ class AgentSystem:
                 prompt = self._add_tool_availability_info(base_prompt, enabled_tools)
                 if memory_context:
                     prompt = self._inject_memory_context(prompt, memory_context)
+                # Add anti-hallucination rules to ALL prompts (including personas)
+                prompt = self._add_anti_hallucination_rules(prompt)
                 return prompt
         
         # Build the default system prompt with tool availability
         all_tools = {
-            "web_search": "For current events, news, prices, recent information",
+            "document_search": "Search user's uploaded documents/library - USE THIS FIRST for questions that might be answered by their files",
+            "web_search": "For current events, news, prices, recent information - use when documents don't have the answer",
             "youtube_search": "To search and play YouTube videos - use when user wants to watch, play, or find videos",
             "generate_image": "To create AI-generated images - use when user asks to create, generate, draw, or make an image/picture/artwork",
-            "document_search": "To find info in user's uploaded documents",
             "memory_recall": "To remember things about this user",
             "memory_store": "To save important info about the user (name, preferences, etc)",
             "calculator": "For math calculations"
@@ -833,6 +847,18 @@ class AgentSystem:
             prompt += "ENABLED TOOLS - You CAN and SHOULD use these tools when relevant:\n"
             prompt += "\n".join(enabled_list)
             prompt += "\n\n"
+            
+            # Add document search priority instructions if enabled
+            if "document_search" in enabled_tools_set:
+                prompt += """DOCUMENT SEARCH PRIORITY:
+When the user asks a question that could be answered by their uploaded documents:
+1. FIRST check document_search - the user's personal library should be your primary source
+2. Only use web_search if: the document search returns no results, OR the user explicitly asks for web/internet info, OR the question is clearly about current events/news
+3. The user has uploaded documents for a reason - they want you to use that information!
+4. If you find relevant info in documents, cite which document it came from.
+
+"""
+            
             prompt += """CRITICAL RULES FOR TOOL USAGE:
 1. For ANY question about current/real-time data (stock prices, news, weather, sports scores, current events), you MUST use web_search. DO NOT answer from memory.
 2. Stock prices change constantly - NEVER guess or use old data. ALWAYS search.
@@ -862,7 +888,24 @@ class AgentSystem:
 - Use natural flowing sentences
 - NEVER claim to perform an action you haven't actually done
 - NEVER make up or fabricate prices, statistics, or current data - ALWAYS use web_search first
-- If tools are available, USE THEM instead of saying you can't access information"""
+- If tools are available, USE THEM instead of saying you can't access information
+
+=== CRITICAL: NO HALLUCINATION / NO MAKING THINGS UP ===
+NEVER fabricate, invent, or guess information. This includes:
+- Plot details of TV shows, movies, books, or games you're not certain about
+- Facts about people, places, companies, or events
+- Technical specifications, prices, dates, or statistics
+- Anything you're not 100% confident is accurate
+
+If you don't know something or aren't sure:
+1. FIRST try using available tools (document_search, web_search) to find the answer
+2. If no tools are available or they don't help, ADMIT you don't know
+3. Say "I don't have reliable information about that" or "I'm not certain about the details"
+4. NEVER make up plausible-sounding but potentially false information
+
+It is ALWAYS better to say "I don't know" than to make something up.
+The user trusts you - don't betray that trust by inventing false information.
+=== END CRITICAL ==="""
         
         return prompt
     
@@ -957,11 +1000,38 @@ Use this information naturally in your responses. Don't explicitly say "I rememb
         
         return base_prompt + prompt_addition
     
+    def _add_anti_hallucination_rules(self, prompt: str) -> str:
+        """Add anti-hallucination rules to any prompt (including personas)"""
+        rules = """
+
+=== CRITICAL: NO HALLUCINATION / NO MAKING THINGS UP ===
+NEVER fabricate, invent, or guess information. This includes:
+- Plot details of TV shows, movies, books, or games you're not certain about
+- Facts about people, places, companies, or events
+- Technical specifications, prices, dates, or statistics
+- Anything you're not 100% confident is accurate
+
+If you don't know something or aren't sure:
+1. FIRST try using available tools (document_search, web_search) to find the answer
+2. If no tools are available or they don't help, ADMIT you don't know
+3. Say "I don't have reliable information about that" or "I'm not certain about the details"
+4. NEVER make up plausible-sounding but potentially false information
+
+It is ALWAYS better to say "I don't know" than to make something up.
+The user trusts you - don't betray that trust by inventing false information.
+=== END CRITICAL ==="""
+        
+        return prompt + rules
+    
     async def _get_chat_history(self, chat_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent chat history"""
-        messages = await database.messages.find(
-            {"chat_id": ObjectId(chat_id)}
-        ).sort("created_at", -1).limit(limit).to_list(limit)
+        """Get recent chat history, excluding messages marked as excluded from context"""
+        messages = await database.messages.find({
+            "chat_id": ObjectId(chat_id),
+            "$or": [
+                {"exclude_from_context": {"$ne": True}},
+                {"exclude_from_context": {"$exists": False}}
+            ]
+        }).sort("created_at", -1).limit(limit).to_list(limit)
         
         messages.reverse()
         return [{"role": m["role"], "content": m["content"]} for m in messages]
