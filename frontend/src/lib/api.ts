@@ -925,6 +925,15 @@ export interface ToolParameter {
   enum?: string[];
 }
 
+export interface ValidationTestCase {
+  id: string;
+  name: string;
+  input_params: string | Record<string, any>;
+  expected_output: string | any;
+  match_type: 'exact' | 'contains' | 'type_only';
+  enabled: boolean;
+}
+
 export interface TestRun {
   id: string;
   timestamp: string;
@@ -933,6 +942,27 @@ export interface TestRun {
   error: string | null;
   duration_ms: number;
   success: boolean;
+  test_case_id?: string;
+  expected_output?: any;
+  match_result?: string;
+}
+
+export interface ValidationTestResult {
+  test_case_id: string;
+  test_name: string;
+  success: boolean;
+  input_params: Record<string, any>;
+  expected_output: any;
+  actual_output: any;
+  error: string | null;
+  match_description: string;
+  duration_ms: number;
+}
+
+export interface AutonomousBuildEvent {
+  event_type: 'status' | 'iteration' | 'test_result' | 'code_update' | 'complete' | 'error';
+  timestamp: string;
+  data: Record<string, any>;
 }
 
 export interface CustomTool {
@@ -948,6 +978,7 @@ export interface CustomTool {
   updated_at: string;
   version: number;
   test_results: TestRun[];
+  validation_tests: ValidationTestCase[];
 }
 
 export const customTools = {
@@ -965,6 +996,7 @@ export const customTools = {
     description: string;
     parameters?: ToolParameter[];
     code?: string;
+    validation_tests?: ValidationTestCase[];
   }) =>
     request<CustomTool>('/api/admin/custom-tools', {
       method: 'POST',
@@ -977,6 +1009,7 @@ export const customTools = {
     parameters: ToolParameter[];
     code: string;
     status: string;
+    validation_tests: ValidationTestCase[];
   }>) =>
     request<CustomTool>(`/api/admin/custom-tools/${id}`, {
       method: 'PUT',
@@ -998,6 +1031,15 @@ export const customTools = {
       body: JSON.stringify({ parameters }),
     }),
 
+  runValidationTests: (id: string) =>
+    request<{
+      total: number;
+      passed: number;
+      failed: number;
+      results: ValidationTestResult[];
+      all_passed: boolean;
+    }>(`/api/admin/custom-tools/${id}/run-validation-tests`, { method: 'POST' }),
+
   release: (id: string) =>
     request<CustomTool>(`/api/admin/custom-tools/${id}/release`, { method: 'POST' }),
 
@@ -1016,6 +1058,77 @@ export const customTools = {
       method: 'POST',
       body: JSON.stringify({ prompt }),
     }),
+
+  // AI Chat for tool assistant - more flexible responses
+  aiChat: (prompt: string) =>
+    request<{
+      action?: string;
+      code?: string;
+      validation_tests?: ValidationTestCase[];
+      explanation?: string;
+    }>('/api/admin/custom-tools/ai-chat', {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }),
+
+  // Autonomous Build - streams SSE events
+  autonomousBuild: async function* (prompt: string, validationTests: ValidationTestCase[], maxIterations: number = 5) {
+    const token = getToken();
+    
+    const response = await fetch(`${API_URL}/api/admin/custom-tools/autonomous-build`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ 
+        prompt, 
+        validation_tests: validationTests,
+        max_iterations: maxIterations 
+      }),
+    });
+    
+    if (!response.ok) {
+      throw new ApiError(response.status, 'Failed to start autonomous build');
+    }
+    
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    
+    if (!reader) return;
+    
+    let buffer = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6)) as AutonomousBuildEvent;
+            yield data;
+          } catch (e) {
+            console.warn('[Autonomous Build] Failed to parse SSE:', line.slice(0, 100));
+          }
+        }
+      }
+    }
+    
+    if (buffer.startsWith('data: ')) {
+      try {
+        const data = JSON.parse(buffer.slice(6)) as AutonomousBuildEvent;
+        yield data;
+      } catch (e) {
+        // ignore
+      }
+    }
+  },
 };
 
 export { ApiError };
