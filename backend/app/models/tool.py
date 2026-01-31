@@ -80,6 +80,11 @@ class ToolResponse(BaseModel):
     is_enabled: bool = True
     can_toggle: bool = False
     
+    # Tool source indicators
+    is_custom: bool = False
+    mcp_server_id: Optional[str] = None
+    category: Optional[str] = None
+    
     class Config:
         populate_by_name = True
 

@@ -132,6 +132,12 @@ class Database:
             IndexModel([("created_by", ASCENDING)]),
         ])
         
+        # MCP servers collection
+        await self.db.mcp_servers.create_indexes([
+            IndexModel([("name", ASCENDING)], unique=True),
+            IndexModel([("is_enabled", ASCENDING)]),
+        ])
+        
         logger.info("Database indexes created")
     
     # ============== Collection Accessors ==============
@@ -187,6 +193,10 @@ class Database:
     @property
     def custom_tools(self):
         return self.db.custom_tools
+    
+    @property
+    def mcp_servers(self):
+        return self.db.mcp_servers
 
 
 # Global database instance

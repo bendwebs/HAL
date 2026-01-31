@@ -202,6 +202,9 @@ export interface Tool {
   last_used: string | null;
   is_enabled: boolean;
   can_toggle: boolean;
+  is_custom?: boolean;
+  mcp_server_id?: string;
+  category?: string;
 }
 
 // Alert types

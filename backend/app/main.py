@@ -125,6 +125,7 @@ from app.routers.youtube import router as youtube_router
 from app.routers.stt import router as stt_router
 from app.routers.images import router as images_router
 from app.routers.custom_tools import router as custom_tools_router
+from app.routers.mcp_servers import router as mcp_servers_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -142,6 +143,7 @@ app.include_router(youtube_router, prefix="/api")
 app.include_router(stt_router, prefix="/api")
 app.include_router(images_router, prefix="/api")
 app.include_router(custom_tools_router, prefix="/api")
+app.include_router(mcp_servers_router, prefix="/api")
 
 from app.routers.context import router as context_router
 app.include_router(context_router, prefix="/api")

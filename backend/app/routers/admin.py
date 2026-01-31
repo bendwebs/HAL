@@ -126,7 +126,8 @@ async def admin_list_tools(
             "last_used": t.get("last_used"),
             "created_at": t.get("created_at"),
             "updated_at": t.get("updated_at"),
-            "is_custom": False,
+            "is_custom": t.get("is_custom", False),
+            "mcp_server_id": str(t["mcp_server_id"]) if t.get("mcp_server_id") else None,
         }
         for t in tools
     ]

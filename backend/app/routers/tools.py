@@ -80,7 +80,10 @@ async def list_tools(
             usage_count=tool.get("usage_count", 0),
             last_used=tool.get("last_used"),
             is_enabled=is_enabled,
-            can_toggle=can_toggle
+            can_toggle=can_toggle,
+            is_custom=tool.get("is_custom", False),
+            mcp_server_id=str(tool["mcp_server_id"]) if tool.get("mcp_server_id") else None,
+            category=tool.get("category"),
         ))
     
     # Get released custom tools
