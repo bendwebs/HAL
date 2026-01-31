@@ -125,6 +125,13 @@ class Database:
             IndexModel([("user_selected_video_id", ASCENDING)]),
         ])
         
+        # Custom tools collection (admin-created tools)
+        await self.db.custom_tools.create_indexes([
+            IndexModel([("name", ASCENDING)], unique=True),
+            IndexModel([("status", ASCENDING)]),
+            IndexModel([("created_by", ASCENDING)]),
+        ])
+        
         logger.info("Database indexes created")
     
     # ============== Collection Accessors ==============
@@ -176,6 +183,10 @@ class Database:
     @property
     def youtube_searches(self):
         return self.db.youtube_searches
+    
+    @property
+    def custom_tools(self):
+        return self.db.custom_tools
 
 
 # Global database instance

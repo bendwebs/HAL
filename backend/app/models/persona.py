@@ -41,6 +41,7 @@ class PersonaInDB(PersonaBase):
     creator_id: Optional[str] = None  # None for system personas
     is_public: bool = False
     is_system: bool = False
+    is_default: bool = False  # Only one persona should be marked as default
     created_at: datetime
     updated_at: Optional[datetime] = None
     
@@ -62,6 +63,7 @@ class PersonaResponse(BaseModel):
     creator_id: Optional[str]
     is_public: bool
     is_system: bool
+    is_default: bool = False  # Whether this is the default persona
     created_at: datetime
     usage_count: int = 0
     last_used: Optional[datetime] = None
@@ -81,6 +83,7 @@ class PersonaListResponse(BaseModel):
     default_voice_id: Optional[str] = None
     is_public: bool
     is_system: bool
+    is_default: bool = False  # Whether this is the default persona
     is_owner: bool
     usage_count: int = 0
     last_used: Optional[datetime] = None

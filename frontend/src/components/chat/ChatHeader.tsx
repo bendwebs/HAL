@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Chat, Persona } from '@/types';
 import { chats as chatsApi, tts as ttsApi, personas as personasApi } from '@/lib/api';
 import { useUIStore } from '@/stores/ui';
@@ -18,7 +18,8 @@ import {
   Volume2,
   VolumeX,
   User,
-  ChevronDown
+  ChevronDown,
+  Star
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import ContextWindowManager from './ContextWindowManager';
@@ -26,7 +27,7 @@ import ContextWindowManager from './ContextWindowManager';
 interface ChatHeaderProps {
   chat: Chat;
   onUpdate: (chat: Chat) => void;
-  contextRefreshTrigger?: number; // Pass to ContextWindowManager to trigger refresh
+  contextRefreshTrigger?: number;
 }
 
 const visibilityIcons = {
@@ -45,7 +46,6 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [showPersonaMenu, setShowPersonaMenu] = useState(false);
 
-  // Check if TTS service is available
   useEffect(() => {
     ttsApi.health().then(res => {
       setTtsAvailable(res.status === 'healthy');
@@ -54,12 +54,16 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
     });
   }, []);
 
-  // Load personas
   useEffect(() => {
     personasApi.list().then(setPersonas).catch(console.error);
   }, []);
 
   const VisibilityIcon = visibilityIcons[chat.visibility];
+
+  // Find the default persona (for display when no persona is selected)
+  const defaultPersona = useMemo(() => {
+    return personas.find(p => p.is_default) || personas.find(p => p.is_system && p.name === 'HAL');
+  }, [personas]);
 
   const handleToggleTTS = async () => {
     try {
@@ -82,7 +86,7 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
       onUpdate(updated);
       const personaName = personaId 
         ? personas.find(p => p.id === personaId)?.name || 'Persona'
-        : 'Default';
+        : defaultPersona?.name || 'HAL';
       toast.success(`Switched to ${personaName}`);
     } catch (err) {
       console.error('Failed to change persona:', err);
@@ -92,13 +96,17 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
   };
 
   const currentPersona = personas.find(p => p.id === chat.persona_id);
+  
+  // Display name: current persona, or default persona name, or 'HAL'
+  const displayPersonaName = currentPersona?.name || defaultPersona?.name || 'HAL';
+  const displayPersonaEmoji = currentPersona?.avatar_emoji || defaultPersona?.avatar_emoji;
 
   const handleSaveTitle = async () => {
     if (title.trim() && title !== chat.title) {
       try {
         const updated = await chatsApi.update(chat.id, { title: title.trim() });
         onUpdate(updated);
-        refreshChatList(); // Update sidebar
+        refreshChatList();
         toast.success('Chat renamed');
       } catch (err) {
         console.error('Failed to update title:', err);
@@ -128,7 +136,7 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
               toast.dismiss(t.id);
               try {
                 await chatsApi.delete(chat.id);
-                refreshChatList(); // Update sidebar
+                refreshChatList();
                 toast.success('Chat deleted');
                 router.push('/chat');
               } catch (err) {
@@ -193,9 +201,13 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
               onClick={() => setShowPersonaMenu(!showPersonaMenu)}
               className="flex items-center gap-1.5 px-2 py-1 text-sm text-text-secondary hover:bg-surface rounded-lg transition-colors"
             >
-              <User className="w-4 h-4" />
+              {displayPersonaEmoji ? (
+                <span className="text-base">{displayPersonaEmoji}</span>
+              ) : (
+                <User className="w-4 h-4" />
+              )}
               <span className="hidden sm:inline max-w-[100px] truncate">
-                {currentPersona?.name || 'Default'}
+                {displayPersonaName}
               </span>
               <ChevronDown className="w-3 h-3" />
             </button>
@@ -206,28 +218,34 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
                   className="fixed inset-0 z-40"
                   onClick={() => setShowPersonaMenu(false)}
                 />
-                <div className="absolute right-0 top-full mt-1 w-48 bg-bg-elevated border border-border rounded-lg shadow-lg z-50 py-1 max-h-64 overflow-y-auto">
-                  <button
-                    onClick={() => handlePersonaChange(null)}
-                    className={`w-full px-4 py-2 text-left text-sm hover:bg-surface flex items-center gap-2 ${
-                      !chat.persona_id ? 'text-accent' : 'text-text-secondary'
-                    }`}
-                  >
-                    <User className="w-4 h-4" />
-                    Default
-                    {!chat.persona_id && <Check className="w-3 h-3 ml-auto" />}
-                  </button>
+                <div className="absolute right-0 top-full mt-1 w-56 bg-bg-elevated border border-border rounded-lg shadow-lg z-50 py-1 max-h-64 overflow-y-auto">
+                  {/* Show personas sorted with default first */}
                   {personas.map(persona => (
                     <button
                       key={persona.id}
-                      onClick={() => handlePersonaChange(persona.id)}
+                      onClick={() => {
+                        // If clicking the default persona, set persona_id to null
+                        // Otherwise set it to the persona's id
+                        if (persona.is_default) {
+                          handlePersonaChange(null);
+                        } else {
+                          handlePersonaChange(persona.id);
+                        }
+                      }}
                       className={`w-full px-4 py-2 text-left text-sm hover:bg-surface flex items-center gap-2 ${
-                        chat.persona_id === persona.id ? 'text-accent' : 'text-text-secondary'
+                        (persona.is_default && !chat.persona_id) || chat.persona_id === persona.id 
+                          ? 'text-accent' 
+                          : 'text-text-secondary'
                       }`}
                     >
-                      <User className="w-4 h-4" />
-                      <span className="truncate">{persona.name}</span>
-                      {chat.persona_id === persona.id && <Check className="w-3 h-3 ml-auto" />}
+                      <span className="text-base">{persona.avatar_emoji}</span>
+                      <span className="truncate flex-1">{persona.name}</span>
+                      {persona.is_default && (
+                        <Star className="w-3 h-3 text-accent" fill="currentColor" />
+                      )}
+                      {((persona.is_default && !chat.persona_id) || chat.persona_id === persona.id) && (
+                        <Check className="w-3 h-3" />
+                      )}
                     </button>
                   ))}
                 </div>
@@ -246,7 +264,6 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
             model={chat.model_override || 'default'}
             refreshTrigger={contextRefreshTrigger}
             onMessagesDeleted={() => {
-              // Could trigger a refresh of messages if needed
               refreshChatList();
             }}
           />
@@ -306,7 +323,6 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
                     )}
                     <button
                       onClick={() => {
-                        // TODO: Open share modal
                         setShowMenu(false);
                       }}
                       className="w-full px-4 py-2 text-left text-sm text-text-secondary hover:bg-surface flex items-center gap-2"

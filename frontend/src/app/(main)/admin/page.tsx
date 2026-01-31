@@ -15,7 +15,8 @@ import {
   Gpu,
   Thermometer,
   RefreshCw,
-  Mic
+  Mic,
+  Code
 } from 'lucide-react';
 
 interface GpuInfo {
@@ -378,6 +379,13 @@ export default function AdminPage() {
                 >
                   <Wrench className="w-4 h-4" />
                   Manage Tools
+                </button>
+                <button
+                  onClick={() => router.push('/admin/tool-builder')}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-400 rounded-lg transition-colors"
+                >
+                  <Code className="w-4 h-4" />
+                  Tool Builder
                 </button>
                 <button
                   onClick={() => router.push('/admin/alerts')}

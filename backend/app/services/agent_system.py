@@ -169,6 +169,8 @@ class AgentSystem:
         self.model = settings.default_chat_model
         self.max_depth = settings.max_agent_depth
         self._warmed_up = False
+        self._custom_tool_cache: Dict[str, Dict[str, Any]] = {}  # Cache for custom tool definitions
+        self._custom_tool_code: Dict[str, str] = {}  # Cache for custom tool code
     
     async def warmup(self) -> bool:
         """Warm up the model"""
@@ -189,12 +191,182 @@ class AgentSystem:
             logger.error(f"Warmup failed: {e}")
             return False
     
+    async def _load_custom_tools(self) -> List[str]:
+        """Load released custom tools from database and cache their definitions"""
+        try:
+            # Query released custom tools that are not disabled by permission_level
+            custom_tools = await database.custom_tools.find({
+                "status": "released",
+                "permission_level": {"$ne": "disabled"}  # Exclude disabled tools
+            }).to_list(100)
+            
+            tool_names = []
+            for tool in custom_tools:
+                # Also skip if permission_level is explicitly disabled
+                if tool.get("permission_level") == "disabled":
+                    continue
+                    
+                name = tool["name"]
+                tool_names.append(name)
+                
+                # Build Ollama-format tool definition
+                parameters = {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+                
+                for param in tool.get("parameters", []):
+                    param_type = param.get("type", "string")
+                    # Map our types to JSON schema types
+                    type_mapping = {
+                        "string": "string",
+                        "integer": "integer",
+                        "number": "number",
+                        "boolean": "boolean",
+                        "array": "array",
+                        "object": "object"
+                    }
+                    parameters["properties"][param["name"]] = {
+                        "type": type_mapping.get(param_type, "string"),
+                        "description": param.get("description", "")
+                    }
+                    if param.get("required", False):
+                        parameters["required"].append(param["name"])
+                
+                # Cache the tool definition in Ollama format
+                self._custom_tool_cache[name] = {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": tool.get("description", ""),
+                        "parameters": parameters
+                    }
+                }
+                
+                # Cache the code for execution
+                self._custom_tool_code[name] = tool.get("code", "")
+            
+            return tool_names
+        except Exception as e:
+            logger.error(f"Failed to load custom tools: {e}")
+            return []
+    
+    async def _execute_custom_tool(
+        self, 
+        tool_name: str, 
+        parameters: Dict[str, Any],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Execute a custom tool by running its code"""
+        import asyncio
+        import traceback
+        
+        code = self._custom_tool_code.get(tool_name)
+        if not code:
+            return {"success": False, "error": f"Custom tool code not found: {tool_name}"}
+        
+        try:
+            # Capture print statements
+            logs = []
+            def custom_print(*args, **kwargs):
+                logs.append(" ".join(str(a) for a in args))
+            
+            # Safe builtins for execution
+            safe_builtins = {
+                "print": custom_print,
+                "len": len,
+                "str": str,
+                "int": int,
+                "float": float,
+                "bool": bool,
+                "list": list,
+                "dict": dict,
+                "tuple": tuple,
+                "set": set,
+                "range": range,
+                "enumerate": enumerate,
+                "zip": zip,
+                "map": map,
+                "filter": filter,
+                "sorted": sorted,
+                "reversed": reversed,
+                "sum": sum,
+                "min": min,
+                "max": max,
+                "abs": abs,
+                "round": round,
+                "isinstance": isinstance,
+                "type": type,
+                "hasattr": hasattr,
+                "getattr": getattr,
+                "setattr": setattr,
+                "None": None,
+                "True": True,
+                "False": False,
+            }
+            
+            # Create execution namespace
+            namespace = {"__builtins__": safe_builtins}
+            
+            # Allow some imports
+            import json as json_module
+            import re as re_module
+            import math as math_module
+            import random as random_module
+            import urllib.parse as urllib_parse
+            import httpx
+            
+            namespace["json"] = json_module
+            namespace["re"] = re_module
+            namespace["math"] = math_module
+            namespace["random"] = random_module
+            namespace["urllib"] = type("urllib", (), {"parse": urllib_parse})()
+            namespace["httpx"] = httpx
+            namespace["asyncio"] = asyncio
+            
+            # Execute the code to define the function
+            exec(code, namespace)
+            
+            # Find and call the execute function
+            if "execute" not in namespace:
+                return {"success": False, "error": "Custom tool must define an 'execute' function"}
+            
+            execute_func = namespace["execute"]
+            
+            # Call the function (handle both sync and async)
+            if asyncio.iscoroutinefunction(execute_func):
+                result = await execute_func(**parameters)
+            else:
+                result = execute_func(**parameters)
+            
+            # Record usage
+            tool_executor = get_tool_executor()
+            await tool_executor.record_tool_usage(tool_name)
+            
+            return {
+                "success": True, 
+                "result": result,
+                "logs": logs if logs else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Custom tool execution error for {tool_name}: {e}")
+            return {
+                "success": False, 
+                "error": f"Execution error: {str(e)}",
+                "traceback": traceback.format_exc()
+            }
+    
     def _get_tools_for_ollama(self, enabled_tool_names: List[str]) -> List[Dict[str, Any]]:
         """Get tool definitions in Ollama format"""
         tools = []
         for name in enabled_tool_names:
             if name in TOOL_DEFINITIONS:
                 tools.append(TOOL_DEFINITIONS[name])
+            # Check if it's a custom tool (stored in cache during get_enabled_custom_tools)
+            elif name in self._custom_tool_cache:
+                tools.append(self._custom_tool_cache[name])
         return tools
     
     async def _execute_tool(
@@ -377,6 +549,11 @@ class AgentSystem:
                 else:
                     return {"success": False, "error": result.get("error", "Image generation failed")}
             
+            # Check if it's a custom tool
+            elif tool_name in self._custom_tool_code:
+                logger.info(f"[CUSTOM TOOL] Executing custom tool: {tool_name}")
+                return await self._execute_custom_tool(tool_name, parameters, user_id)
+            
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
         
@@ -402,6 +579,12 @@ class AgentSystem:
         # Default tools if not specified
         if enabled_tools is None:
             enabled_tools = ["web_search", "youtube_search", "generate_image", "document_search", "memory_recall", "memory_store", "calculator"]
+        
+        # Load custom tools and add them to enabled_tools
+        custom_tool_names = await self._load_custom_tools()
+        if custom_tool_names:
+            enabled_tools = enabled_tools + custom_tool_names
+            logger.info(f"[CUSTOM TOOLS] Added {len(custom_tool_names)} custom tools: {custom_tool_names}")
         
         # Get system prompt with tool availability info and memory context for voice mode
         system_prompt = await self._get_system_prompt(
@@ -794,19 +977,28 @@ class AgentSystem:
         if voice_mode and user_message:
             memory_context = await self._get_relevant_memories_for_context(user_id, user_message)
         
+        persona = None
         if persona_id:
             persona = await database.personas.find_one({"_id": ObjectId(persona_id)})
-            if persona:
-                base_prompt = persona["system_prompt"]
-                # Add tool availability info to persona prompt
-                prompt = self._add_tool_availability_info(base_prompt, enabled_tools)
-                if memory_context:
-                    prompt = self._inject_memory_context(prompt, memory_context)
-                # Add anti-hallucination rules to ALL prompts (including personas)
-                prompt = self._add_anti_hallucination_rules(prompt)
-                return prompt
         
-        # Build the default system prompt with tool availability
+        # If no persona specified, use the default system persona (HAL)
+        if not persona:
+            persona = await database.personas.find_one({"is_system": True, "is_default": True})
+            # Fallback to HAL persona by name if is_default not set
+            if not persona:
+                persona = await database.personas.find_one({"is_system": True, "name": "HAL"})
+        
+        if persona:
+            base_prompt = persona["system_prompt"]
+            # Add tool availability info to persona prompt
+            prompt = self._add_tool_availability_info(base_prompt, enabled_tools)
+            if memory_context:
+                prompt = self._inject_memory_context(prompt, memory_context)
+            # Add anti-hallucination rules to ALL prompts (including personas)
+            prompt = self._add_anti_hallucination_rules(prompt)
+            return prompt
+        
+        # Build the default system prompt with tool availability (fallback if no HAL persona exists)
         all_tools = {
             "document_search": "Search user's uploaded documents/library - USE THIS FIRST for questions that might be answered by their files",
             "web_search": "For current events, news, prices, recent information - use when documents don't have the answer",

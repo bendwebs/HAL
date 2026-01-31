@@ -107,10 +107,11 @@ async def delete_user(
 async def admin_list_tools(
     admin: Dict[str, Any] = Depends(get_current_admin),
 ):
-    """List all tools with full config"""
+    """List all tools with full config (built-in + released custom tools)"""
+    # Get built-in tools
     tools = await database.tools.find().sort("name", 1).to_list(100)
     
-    return [
+    result = [
         {
             "id": str(t["_id"]),
             "name": t["name"],
@@ -124,10 +125,34 @@ async def admin_list_tools(
             "usage_count": t.get("usage_count", 0),
             "last_used": t.get("last_used"),
             "created_at": t.get("created_at"),
-            "updated_at": t.get("updated_at")
+            "updated_at": t.get("updated_at"),
+            "is_custom": False,
         }
         for t in tools
     ]
+    
+    # Get released custom tools
+    custom_tools = await database.custom_tools.find({"status": "released"}).sort("name", 1).to_list(100)
+    
+    for ct in custom_tools:
+        result.append({
+            "id": str(ct["_id"]),
+            "name": ct["name"],
+            "display_name": ct["display_name"],
+            "description": ct.get("description", ""),
+            "icon": "🛠️",  # Custom tool icon
+            "schema": {"parameters": ct.get("parameters", [])},
+            "permission_level": ct.get("permission_level", ToolPermissionLevel.USER_TOGGLE),
+            "default_enabled": ct.get("default_enabled", True),
+            "config": {},
+            "usage_count": ct.get("usage_count", 0),
+            "last_used": ct.get("last_used"),
+            "created_at": ct.get("created_at"),
+            "updated_at": ct.get("updated_at"),
+            "is_custom": True,
+        })
+    
+    return result
 
 
 @router.put("/tools/{tool_id}")
@@ -136,8 +161,16 @@ async def admin_update_tool(
     update: ToolUpdate,
     admin: Dict[str, Any] = Depends(get_current_admin),
 ):
-    """Update tool configuration"""
+    """Update tool configuration (works for both built-in and custom tools)"""
+    # First try built-in tools
     tool = await database.tools.find_one({"_id": ObjectId(tool_id)})
+    is_custom = False
+    
+    # If not found, try custom tools
+    if not tool:
+        tool = await database.custom_tools.find_one({"_id": ObjectId(tool_id)})
+        is_custom = True
+    
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
     
@@ -145,9 +178,11 @@ async def admin_update_tool(
     update_data = update.model_dump(exclude_unset=True)
     updates.update(update_data)
     
-    logger.info(f"[ADMIN TOOL UPDATE] tool_id={tool_id}, tool_name={tool.get('name')}, update_data={update_data}, final_updates={updates}")
+    collection = database.custom_tools if is_custom else database.tools
     
-    result = await database.tools.update_one(
+    logger.info(f"[ADMIN TOOL UPDATE] tool_id={tool_id}, tool_name={tool.get('name')}, is_custom={is_custom}, update_data={update_data}")
+    
+    result = await collection.update_one(
         {"_id": ObjectId(tool_id)},
         {"$set": updates}
     )

@@ -24,11 +24,13 @@ async def list_tools(
     
     DISABLED tools are hidden from everyone (including admins) - they cannot be used.
     ADMIN_ONLY tools are only shown to admins.
+    Includes both built-in tools and released custom tools.
     """
     user_id = current_user["_id"]
     is_admin = current_user.get("role") == UserRole.ADMIN
     user_overrides = current_user.get("settings", {}).get("tool_overrides", {})
     
+    # Get built-in tools
     tools = await database.tools.find().sort("display_name", 1).to_list(100)
     
     result = []
@@ -81,7 +83,70 @@ async def list_tools(
             can_toggle=can_toggle
         ))
     
-    logger.info(f"[TOOLS] Returning {len(result)} tools to user (is_admin={is_admin})")
+    # Get released custom tools
+    custom_tools = await database.custom_tools.find({
+        "status": "released"
+    }).sort("display_name", 1).to_list(100)
+    
+    for tool in custom_tools:
+        perm = tool.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
+        
+        # DISABLED tools are hidden
+        if perm == ToolPermissionLevel.DISABLED:
+            continue
+        
+        # ADMIN_ONLY tools are only shown to admins
+        if perm == ToolPermissionLevel.ADMIN_ONLY and not is_admin:
+            continue
+        
+        # Determine if tool is enabled for this user
+        if perm == ToolPermissionLevel.ADMIN_ONLY:
+            is_enabled = True
+            can_toggle = False
+        elif perm == ToolPermissionLevel.ALWAYS_ON:
+            is_enabled = True
+            can_toggle = False
+        elif perm == ToolPermissionLevel.USER_TOGGLE:
+            is_enabled = user_overrides.get(tool["name"], True)
+            can_toggle = True
+        elif perm == ToolPermissionLevel.OPT_IN:
+            is_enabled = user_overrides.get(tool["name"], False)
+            can_toggle = True
+        else:
+            is_enabled = tool.get("default_enabled", True)
+            can_toggle = False
+        
+        # Build schema from parameters
+        schema = {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+        for param in tool.get("parameters", []):
+            schema["properties"][param["name"]] = {
+                "type": param.get("type", "string"),
+                "description": param.get("description", "")
+            }
+            if param.get("required"):
+                schema["required"].append(param["name"])
+        
+        result.append(ToolResponse(
+            id=str(tool["_id"]),
+            name=tool["name"],
+            display_name=tool["display_name"],
+            description=tool.get("description", ""),
+            icon="🛠️",  # Custom tool icon
+            schema=schema,
+            permission_level=perm,
+            default_enabled=tool.get("default_enabled", True),
+            config={},
+            usage_count=tool.get("usage_count", 0),
+            last_used=tool.get("last_used"),
+            is_enabled=is_enabled,
+            can_toggle=can_toggle
+        ))
+    
+    logger.info(f"[TOOLS] Returning {len(result)} tools to user (is_admin={is_admin}, custom={len(custom_tools)})")
     return result
 
 
@@ -91,8 +156,13 @@ async def toggle_tool(
     request: ToolToggleRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Toggle tool enabled state for current user"""
+    """Toggle tool enabled state for current user (works for both built-in and custom tools)"""
+    # Try built-in tools first
     tool = await database.tools.find_one({"_id": ObjectId(tool_id)})
+    
+    # If not found, try custom tools
+    if not tool:
+        tool = await database.custom_tools.find_one({"_id": ObjectId(tool_id)})
     
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")

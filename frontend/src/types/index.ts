@@ -140,11 +140,15 @@ export interface Persona {
   avatar_emoji: string;
   temperature: number;
   model_override: string | null;
+  default_voice_id: string | null;
   tools_enabled: string[];
   creator_id: string | null;
   is_public: boolean;
   is_system: boolean;
+  is_default: boolean;
   created_at: string;
+  usage_count: number;
+  last_used: string | null;
   is_owner: boolean;
 }
 
@@ -153,9 +157,15 @@ export interface PersonaListItem {
   name: string;
   description: string;
   avatar_emoji: string;
+  temperature: number;
+  model_override: string | null;
+  default_voice_id: string | null;
   is_public: boolean;
   is_system: boolean;
+  is_default: boolean;
   is_owner: boolean;
+  usage_count: number;
+  last_used: string | null;
 }
 
 // Memory types

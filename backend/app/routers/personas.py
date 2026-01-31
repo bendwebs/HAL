@@ -43,7 +43,8 @@ async def list_personas(
         ]
     }
     
-    personas = await database.personas.find(query).sort("usage_count", -1).to_list(100)
+    # Sort: default first, then by usage count
+    personas = await database.personas.find(query).sort([("is_default", -1), ("usage_count", -1)]).to_list(100)
     
     return [
         PersonaListResponse(
@@ -56,6 +57,7 @@ async def list_personas(
             default_voice_id=p.get("default_voice_id"),
             is_public=p.get("is_public", False),
             is_system=p.get("is_system", False),
+            is_default=p.get("is_default", False),
             is_owner=str(p.get("creator_id")) == user_id if p.get("creator_id") else False,
             usage_count=p.get("usage_count", 0),
             last_used=p.get("last_used")
@@ -84,6 +86,7 @@ async def create_persona(
         "tools_enabled": persona_data.tools_enabled,
         "is_public": persona_data.is_public,
         "is_system": False,
+        "is_default": False,
         "usage_count": 0,
         "last_used": None,
         "created_at": now,
@@ -105,6 +108,7 @@ async def create_persona(
         creator_id=current_user["_id"],
         is_public=persona_doc["is_public"],
         is_system=False,
+        is_default=False,
         created_at=now,
         usage_count=0,
         last_used=None,
@@ -143,6 +147,7 @@ async def get_persona(
         creator_id=str(persona["creator_id"]) if persona.get("creator_id") else None,
         is_public=persona.get("is_public", False),
         is_system=persona.get("is_system", False),
+        is_default=persona.get("is_default", False),
         created_at=persona["created_at"],
         usage_count=persona.get("usage_count", 0),
         last_used=persona.get("last_used"),

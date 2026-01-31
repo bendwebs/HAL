@@ -60,7 +60,6 @@ async def lifespan(app: FastAPI):
     await tool_executor.initialize_tools_in_db()
     
     # Preload STT model in background (non-blocking)
-    # This ensures the model is ready when /converse is used
     import asyncio
     async def preload_stt():
         try:
@@ -72,7 +71,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"STT preload failed (will load on first use): {e}")
     
-    # Run in background so startup isn't blocked
     asyncio.create_task(preload_stt())
     
     # Create default admin user if not exists
@@ -107,7 +105,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this to your frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -126,6 +124,7 @@ from app.routers.voice_settings import router as voice_settings_router
 from app.routers.youtube import router as youtube_router
 from app.routers.stt import router as stt_router
 from app.routers.images import router as images_router
+from app.routers.custom_tools import router as custom_tools_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chats_router, prefix="/api")
@@ -142,16 +141,14 @@ app.include_router(voice_settings_router, prefix="/api")
 app.include_router(youtube_router, prefix="/api")
 app.include_router(stt_router, prefix="/api")
 app.include_router(images_router, prefix="/api")
+app.include_router(custom_tools_router, prefix="/api")
 
-# Context management router
 from app.routers.context import router as context_router
 app.include_router(context_router, prefix="/api")
 
 
-# Health check endpoint
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
@@ -161,7 +158,6 @@ async def health_check():
 
 @app.get("/api/models")
 async def list_models():
-    """List available Ollama models"""
     from app.services.ollama_client import get_ollama_client
     
     ollama = get_ollama_client()
@@ -175,7 +171,6 @@ async def list_models():
 
 
 async def create_default_admin():
-    """Create default admin user if none exists"""
     admin = await database.users.find_one({"username": "admin"})
     
     if not admin:
@@ -187,13 +182,12 @@ async def create_default_admin():
             "role": UserRole.ADMIN,
             "settings": UserSettings().model_dump(),
             "storage_used": 0,
-            "storage_quota": 10737418240,  # 10GB for admin
+            "storage_quota": 10737418240,
             "created_at": now,
             "updated_at": now
         })
         logger.info("Default admin user created (username: admin, password: admin123)")
         
-        # Create welcome alert
         await database.alerts.insert_one({
             "title": "Welcome to HAL",
             "message": "Your local AI system is ready. Please change the default admin password immediately.",
@@ -213,7 +207,7 @@ async def create_default_persona():
         now = datetime.utcnow()
         await database.personas.insert_one({
             "name": "HAL",
-            "description": "Friendly conversational AI assistant",
+            "description": "Friendly conversational AI assistant - the default persona",
             "system_prompt": """You are HAL, a friendly AI assistant running locally on the user's computer. You have access to their personal documents, memories from past conversations, and can search the web when needed.
 
 IMPORTANT - Response Style:
@@ -229,14 +223,25 @@ Be warm, helpful, and genuine. If you don't know something, just say so naturall
             "avatar_emoji": "🤖",
             "temperature": 0.7,
             "model_override": None,
-            "tools_enabled": ["document_search", "memory_recall", "memory_store", "calculator", "web_search"],
+            "tools_enabled": ["document_search", "memory_recall", "memory_store", "calculator", "web_search", "youtube_search", "generate_image"],
             "creator_id": None,
             "is_public": True,
             "is_system": True,
+            "is_default": True,
+            "usage_count": 0,
+            "last_used": None,
             "created_at": now,
             "updated_at": now
         })
-        logger.info("Default HAL persona created")
+        logger.info("Default HAL persona created (is_default=True)")
+    else:
+        # Ensure existing HAL persona is marked as default
+        if not existing.get("is_default"):
+            await database.personas.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"is_default": True}}
+            )
+            logger.info("Marked existing HAL persona as default")
 
 
 async def create_voice_persona():
@@ -253,7 +258,7 @@ async def create_voice_persona():
 CRITICAL VOICE GUIDELINES:
 - Keep responses SHORT and conversational - aim for 1-3 sentences unless more detail is truly needed
 - Never use markdown, bullet points, lists, or any formatting - just natural speech
-- NEVER include asterisks (*) in your responses under any circumstances - no *emphasis*, no **bold**, no actions like *smiles*
+- NEVER include asterisks (*) in your responses under any circumstances
 - Never use hashes, dashes, or any other formatting characters
 - Avoid technical jargon unless the user uses it first
 - Use contractions naturally (I'm, you're, it's, don't, won't, that's)
@@ -263,7 +268,7 @@ CRITICAL VOICE GUIDELINES:
 SPEECH PATTERNS:
 - Start responses naturally, not with "Sure!" or "Of course!" every time
 - Vary your openings - sometimes just dive into the answer
-- Use natural filler phrases sparingly when appropriate ("Well...", "So...", "Actually...")
+- Use natural filler phrases sparingly when appropriate
 - End responses cleanly without asking "Is there anything else?" unless truly needed
 
 Remember: This is a CONVERSATION, not a Q&A session. Be warm, natural, and concise.""",
@@ -274,6 +279,9 @@ Remember: This is a CONVERSATION, not a Q&A session. Be warm, natural, and conci
             "creator_id": None,
             "is_public": True,
             "is_system": True,
+            "is_default": False,
+            "usage_count": 0,
+            "last_used": None,
             "created_at": now,
             "updated_at": now
         })

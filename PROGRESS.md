@@ -271,3 +271,28 @@ Last Updated: 2025-01-22
 - Implemented login/register pages
 - Set up API client with streaming support
 - Created PLANNING.md and PROGRESS.md
+
+
+---
+
+## Recent Updates (January 30, 2025)
+
+### Default Persona System ✅
+- [x] HAL persona now serves as the actual default (not just a hardcoded fallback)
+- [x] Added `is_default` field to persona model
+- [x] Backend agent_system.py uses HAL persona when no persona selected
+- [x] Personas page shows "Default" badge with star icon
+- [x] ChatHeader displays persona emoji and name (shows HAL when no persona selected)
+- [x] Persona selector dropdown shows default persona with star indicator
+- [x] Editing the HAL persona now actually changes the default behavior
+
+### Files Modified:
+- `backend/app/models/persona.py` - Added is_default field
+- `backend/app/routers/personas.py` - Returns is_default in responses
+- `backend/app/services/agent_system.py` - Uses HAL persona as default
+- `backend/app/main.py` - Sets is_default=True on HAL persona creation
+- `frontend/src/types/index.ts` - Added is_default to Persona types
+- `frontend/src/app/(main)/personas/page.tsx` - Shows default badge
+- `frontend/src/components/chat/ChatHeader.tsx` - Shows persona emoji/name
+
+---

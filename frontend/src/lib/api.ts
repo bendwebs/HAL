@@ -915,4 +915,107 @@ export const imageGen = {
     request<{ success: boolean; samplers?: string[]; error?: string }>('/api/images/sd/samplers'),
 };
 
+// Custom Tools API (Admin)
+export interface ToolParameter {
+  name: string;
+  type: 'string' | 'integer' | 'number' | 'boolean' | 'array' | 'object';
+  description: string;
+  required: boolean;
+  default?: any;
+  enum?: string[];
+}
+
+export interface TestRun {
+  id: string;
+  timestamp: string;
+  input_params: Record<string, any>;
+  output: any;
+  error: string | null;
+  duration_ms: number;
+  success: boolean;
+}
+
+export interface CustomTool {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  parameters: ToolParameter[];
+  code: string;
+  status: 'draft' | 'testing' | 'released' | 'disabled';
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  test_results: TestRun[];
+}
+
+export const customTools = {
+  list: (status?: string) =>
+    request<{ tools: CustomTool[]; total: number }>(
+      `/api/admin/custom-tools${status ? `?status_filter=${status}` : ''}`
+    ),
+
+  get: (id: string) =>
+    request<CustomTool>(`/api/admin/custom-tools/${id}`),
+
+  create: (data: {
+    name: string;
+    display_name: string;
+    description: string;
+    parameters?: ToolParameter[];
+    code?: string;
+  }) =>
+    request<CustomTool>('/api/admin/custom-tools', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (id: string, data: Partial<{
+    display_name: string;
+    description: string;
+    parameters: ToolParameter[];
+    code: string;
+    status: string;
+  }>) =>
+    request<CustomTool>(`/api/admin/custom-tools/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (id: string) =>
+    request<void>(`/api/admin/custom-tools/${id}`, { method: 'DELETE' }),
+
+  test: (id: string, parameters: Record<string, any>) =>
+    request<{
+      success: boolean;
+      output: any;
+      error: string | null;
+      duration_ms: number;
+      logs: string[];
+    }>(`/api/admin/custom-tools/${id}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ parameters }),
+    }),
+
+  release: (id: string) =>
+    request<CustomTool>(`/api/admin/custom-tools/${id}/release`, { method: 'POST' }),
+
+  disable: (id: string) =>
+    request<CustomTool>(`/api/admin/custom-tools/${id}/disable`, { method: 'POST' }),
+
+  aiGenerate: (prompt: string) =>
+    request<{
+      name: string;
+      display_name: string;
+      description: string;
+      parameters: ToolParameter[];
+      code: string;
+      explanation: string;
+    }>('/api/admin/custom-tools/generate', {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }),
+};
+
 export { ApiError };
