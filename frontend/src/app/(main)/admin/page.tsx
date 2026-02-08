@@ -12,7 +12,7 @@ import {
   Database, 
   Cpu, 
   HardDrive,
-  Gpu,
+  Monitor,
   Thermometer,
   RefreshCw,
   Mic,

@@ -470,6 +470,8 @@ export const admin = {
     list: () => request<any[]>('/api/admin/tools'),
     update: (id: string, data: any) =>
       request<any>(`/api/admin/tools/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<any>(`/api/admin/tools/${id}`, { method: 'DELETE' }),
   },
   
   alerts: {
@@ -930,7 +932,7 @@ export interface ValidationTestCase {
   name: string;
   input_params: string | Record<string, any>;
   expected_output: string | any;
-  match_type: 'exact' | 'contains' | 'type_only';
+  match_type: 'exact' | 'contains' | 'type_only' | 'expression';
   enabled: boolean;
 }
 
@@ -960,7 +962,7 @@ export interface ValidationTestResult {
 }
 
 export interface AutonomousBuildEvent {
-  event_type: 'status' | 'iteration' | 'test_result' | 'code_update' | 'complete' | 'error';
+  event_type: 'status' | 'iteration' | 'test_result' | 'test_running' | 'test_complete' | 'code_update' | 'complete' | 'error';
   timestamp: string;
   data: Record<string, any>;
 }
@@ -1127,6 +1129,197 @@ export const customTools = {
       } catch (e) {
         // ignore
       }
+    }
+  },
+};
+
+// Video Processing API
+export interface VideoInfo {
+  success: boolean;
+  video_id?: string;
+  title?: string;
+  description?: string;
+  duration?: number;
+  duration_string?: string;
+  channel?: string;
+  thumbnail?: string;
+  url?: string;
+  error?: string;
+}
+
+export interface VideoJob {
+  _id: string;
+  job_id: string;
+  url: string;
+  video_id: string;
+  title: string;
+  channel: string;
+  duration: number;
+  thumbnail: string;
+  transcript: string;
+  transcript_language: string;
+  summary: string | null;
+  created_at: string;
+  status: string;
+}
+
+export interface VideoProcessEvent {
+  stage: 'info' | 'downloading' | 'extracting_audio' | 'transcribing' | 'summarizing' | 'complete' | 'error';
+  status?: string;
+  percent?: string;
+  speed?: string;
+  data?: VideoInfo;
+  result?: {
+    id: string;
+    job_id: string;
+    title: string;
+    duration: number;
+    thumbnail: string;
+    transcript: string;
+    transcript_language: string;
+    summary: string | null;
+  };
+  error?: string;
+}
+
+export const videoProcessing = {
+  getInfo: (url: string) =>
+    request<VideoInfo>('/api/youtube/info', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+
+  processVideo: async function* (
+    url: string,
+    options?: {
+      summarize?: boolean;
+      language?: string;
+      model?: string;
+      deleteVideo?: boolean;
+    }
+  ): AsyncGenerator<VideoProcessEvent> {
+    const token = getToken();
+    
+    const response = await fetch(`${API_URL}/api/youtube/process`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        url,
+        summarize: options?.summarize ?? true,
+        language: options?.language,
+        model: options?.model,
+        delete_video: options?.deleteVideo ?? true,
+      }),
+    });
+    
+    if (!response.ok) {
+      throw new ApiError(response.status, 'Failed to start video processing');
+    }
+    
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    
+    if (!reader) return;
+    
+    let buffer = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6)) as VideoProcessEvent;
+            yield data;
+          } catch (e) {
+            console.warn('[Video Process] Failed to parse SSE:', line.slice(0, 100));
+          }
+        }
+      }
+    }
+    
+    if (buffer.startsWith('data: ')) {
+      try {
+        const data = JSON.parse(buffer.slice(6)) as VideoProcessEvent;
+        yield data;
+      } catch (e) {
+        // ignore
+      }
+    }
+  },
+
+  listJobs: (limit = 20) =>
+    request<{ jobs: VideoJob[]; total: number }>(`/api/youtube/jobs?limit=${limit}`),
+
+  getJob: (jobId: string) =>
+    request<VideoJob>(`/api/youtube/jobs/${jobId}`),
+
+  deleteJob: (jobId: string) =>
+    request<{ success: boolean; message: string }>(`/api/youtube/jobs/${jobId}`, {
+      method: 'DELETE',
+    }),
+
+  askQuestion: (question: string, transcript: string, summary: string, title: string) =>
+    request<{ answer: string }>('/api/youtube/ask', {
+      method: 'POST',
+      body: JSON.stringify({ question, transcript, summary, title }),
+    }),
+
+  regenerateSummary: (jobId: string, model?: string) =>
+    request<{ success: boolean; summary: string; model_used?: string }>(`/api/youtube/jobs/${jobId}/regenerate-summary`, {
+      method: 'POST',
+      body: JSON.stringify({ model }),
+    }),
+
+  reprocessJob: async function* (
+    jobId: string,
+    options?: { mode?: 'auto' | 'retranscribe' | 'full'; disableVad?: boolean }
+  ): AsyncGenerator<VideoProcessEvent> {
+    const token = getToken();
+    const response = await fetch(`${API_URL}/api/youtube/jobs/${jobId}/reprocess`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        mode: options?.mode || 'auto',
+        disable_vad: options?.disableVad || false,
+      }),
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, 'Failed to start reprocessing');
+    }
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    if (!reader) return;
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            yield JSON.parse(line.slice(6)) as VideoProcessEvent;
+          } catch (e) {
+            console.warn('[Video Reprocess] Failed to parse SSE:', line.slice(0, 100));
+          }
+        }
+      }
+    }
+    if (buffer.startsWith('data: ')) {
+      try { yield JSON.parse(buffer.slice(6)) as VideoProcessEvent; } catch (e) { /* ignore */ }
     }
   },
 };

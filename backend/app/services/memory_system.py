@@ -936,5 +936,13 @@ def get_memory_system() -> MemorySystem:
     """Get the singleton memory system instance"""
     global _system
     if _system is None:
-        _system = MemorySystem()
+        try:
+            _system = MemorySystem()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Memory system failed to initialize: {e}")
+            # Create a degraded instance that won't crash but won't store memories
+            _system = MemorySystem.__new__(MemorySystem)
+            _system._memory = None
+            _system._initialized = False
     return _system

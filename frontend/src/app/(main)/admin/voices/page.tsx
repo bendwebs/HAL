@@ -78,7 +78,7 @@ export default function AdminVoicesPage() {
     const newEnabled = new Set(newVoices.filter(v => v.enabled).map(v => v.id));
     const enabledChanged = 
       newEnabled.size !== originalEnabled.size ||
-      [...newEnabled].some(id => !originalEnabled.has(id));
+      Array.from(newEnabled).some(id => !originalEnabled.has(id));
     const defaultChanged = newDefaultId !== originalDefaultVoice;
     setHasChanges(enabledChanged || defaultChanged);
   };

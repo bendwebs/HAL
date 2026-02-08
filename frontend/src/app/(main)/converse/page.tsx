@@ -460,7 +460,7 @@ export default function ConversePage() {
     resetUITimer();
     if (chat) {
       try {
-        await chatsApi.update(chat.id, { persona_id: persona?.id || null });
+        await chatsApi.update(chat.id, { persona_id: persona?.id || undefined });
         toast.success(persona ? `Switched to ${persona.name}` : 'Using default assistant');
       } catch (err) {
         console.error('Failed to update persona:', err);

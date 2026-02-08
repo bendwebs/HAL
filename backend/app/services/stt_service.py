@@ -110,7 +110,8 @@ class STTService:
         self,
         audio_data: bytes,
         language: Optional[str] = None,
-        task: str = "transcribe"
+        task: str = "transcribe",
+        vad_filter: bool = True
     ) -> Tuple[str, dict]:
         """
         Transcribe audio data to text.
@@ -143,22 +144,24 @@ class STTService:
             # - best_of=1 (no multiple samples)
             # - temperature=0 (deterministic)
             loop = asyncio.get_event_loop()
+            transcribe_kwargs = dict(
+                language=language,
+                task=task,
+                beam_size=1,
+                best_of=1,
+                temperature=0.0,
+                condition_on_previous_text=False,
+                vad_filter=vad_filter,
+            )
+            if vad_filter:
+                transcribe_kwargs["vad_parameters"] = dict(
+                    min_silence_duration_ms=300,
+                    speech_pad_ms=200,
+                )
+
             segments, info = await loop.run_in_executor(
                 None,
-                lambda: self.model.transcribe(
-                    temp_path,
-                    language=language,
-                    task=task,
-                    beam_size=1,          # Reduced from 5 for speed
-                    best_of=1,            # Reduced from 5 for speed
-                    temperature=0.0,
-                    condition_on_previous_text=False,  # Faster, less context
-                    vad_filter=True,      # Filter out non-speech
-                    vad_parameters=dict(
-                        min_silence_duration_ms=300,  # Reduced from 500
-                        speech_pad_ms=200,            # Reduced from 400
-                    )
-                )
+                lambda: self.model.transcribe(temp_path, **transcribe_kwargs)
             )
             
             # Collect all segments

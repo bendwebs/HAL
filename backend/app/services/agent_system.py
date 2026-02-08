@@ -158,6 +158,30 @@ TOOL_DEFINITIONS = {
                 "required": ["prompt"]
             }
         }
+    },
+    "get_current_date": {
+        "type": "function",
+        "function": {
+            "name": "get_current_date",
+            "description": "Get today's current date. Use this when the user asks what day or date it is, or when you need to know the current date for context.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    "get_current_time": {
+        "type": "function",
+        "function": {
+            "name": "get_current_time",
+            "description": "Get the current local time. Use this when the user asks what time it is.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
     }
 }
 
@@ -273,8 +297,31 @@ class AgentSystem:
                 logs.append(" ".join(str(a) for a in args))
             
             # Safe builtins for execution
+            # Modules BLOCKED in sandbox (dangerous/system-access)
+            _blocked_modules = {
+                'os', 'sys', 'subprocess', 'shutil', 'pathlib', 'glob',
+                'socket', 'http', 'ftplib', 'smtplib', 'imaplib', 'poplib',
+                'telnetlib', 'xmlrpc', 'multiprocessing', 'threading',
+                'signal', 'ctypes', 'importlib', 'runpy', 'code', 'codeop',
+                'compile', 'compileall', 'py_compile', 'zipimport',
+                'pkgutil', 'modulefinder', 'dis', 'pickletools',
+                'pickle', 'shelve', 'marshal', 'dbm', 'sqlite3',
+                'webbrowser', 'turtle', 'tkinter', 'cmd', 'pdb',
+                'profile', 'cProfile', 'trace', 'gc', 'inspect',
+                'resource', 'pty', 'fcntl', 'termios', 'mmap',
+                'tempfile', 'io',
+            }
+            
+            import builtins as _builtins
+            def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+                root = name.split('.')[0]
+                if root in _blocked_modules:
+                    raise ImportError(f"Import of '{name}' is not allowed in sandbox")
+                return _builtins.__import__(name, globals, locals, fromlist, level)
+            
             safe_builtins = {
                 "print": custom_print,
+                "__import__": _safe_import,
                 "len": len,
                 "str": str,
                 "int": int,
@@ -316,6 +363,10 @@ class AgentSystem:
             import random as random_module
             import urllib.parse as urllib_parse
             import httpx
+            import datetime as datetime_module
+            import hashlib as hashlib_module
+            import base64 as base64_module
+            import html as html_module
             
             namespace["json"] = json_module
             namespace["re"] = re_module
@@ -324,6 +375,10 @@ class AgentSystem:
             namespace["urllib"] = type("urllib", (), {"parse": urllib_parse})()
             namespace["httpx"] = httpx
             namespace["asyncio"] = asyncio
+            namespace["datetime"] = datetime_module
+            namespace["hashlib"] = hashlib_module
+            namespace["base64"] = base64_module
+            namespace["html"] = html_module
             
             # Execute the code to define the function
             exec(code, namespace)
@@ -334,11 +389,27 @@ class AgentSystem:
             
             execute_func = namespace["execute"]
             
+            # Filter parameters to match function signature
+            import inspect as _inspect
+            try:
+                sig = _inspect.signature(execute_func)
+                has_var_keyword = any(
+                    p.kind == _inspect.Parameter.VAR_KEYWORD
+                    for p in sig.parameters.values()
+                )
+                if has_var_keyword:
+                    filtered_params = parameters
+                else:
+                    accepted = set(sig.parameters.keys())
+                    filtered_params = {k: v for k, v in parameters.items() if k in accepted}
+            except (ValueError, TypeError):
+                filtered_params = parameters
+            
             # Call the function (handle both sync and async)
             if asyncio.iscoroutinefunction(execute_func):
-                result = await execute_func(**parameters)
+                result = await execute_func(**filtered_params)
             else:
-                result = execute_func(**parameters)
+                result = execute_func(**filtered_params)
             
             # Record usage
             tool_executor = get_tool_executor()
@@ -549,6 +620,24 @@ class AgentSystem:
                 else:
                     return {"success": False, "error": result.get("error", "Image generation failed")}
             
+            elif tool_name == "get_current_date":
+                from datetime import datetime as dt
+                now = dt.now()
+                await tool_executor.record_tool_usage("get_current_date")
+                return {
+                    "success": True,
+                    "result": f"Today is {now.strftime('%A, %B %d, %Y')}"
+                }
+            
+            elif tool_name == "get_current_time":
+                from datetime import datetime as dt
+                now = dt.now()
+                await tool_executor.record_tool_usage("get_current_time")
+                return {
+                    "success": True,
+                    "result": f"The current time is {now.strftime('%I:%M %p')}"
+                }
+            
             # Check if it's a custom tool
             elif tool_name in self._custom_tool_code:
                 logger.info(f"[CUSTOM TOOL] Executing custom tool: {tool_name}")
@@ -578,7 +667,9 @@ class AgentSystem:
         
         # Default tools if not specified
         if enabled_tools is None:
-            enabled_tools = ["web_search", "youtube_search", "generate_image", "document_search", "memory_recall", "memory_store", "calculator"]
+            enabled_tools = ["web_search", "youtube_search", "generate_image", "document_search", 
+                           "memory_recall", "memory_store", "calculator", 
+                           "get_current_date", "get_current_time"]
         
         # Load custom tools and add them to enabled_tools
         custom_tool_names = await self._load_custom_tools()
@@ -1006,7 +1097,9 @@ class AgentSystem:
             "generate_image": "To create AI-generated images - use when user asks to create, generate, draw, or make an image/picture/artwork",
             "memory_recall": "To remember things about this user",
             "memory_store": "To save important info about the user (name, preferences, etc)",
-            "calculator": "For math calculations"
+            "calculator": "For math calculations",
+            "get_current_date": "Get today's date - use when user asks what day/date it is",
+            "get_current_time": "Get the current time - use when user asks what time it is"
         }
         
         if enabled_tools is None:

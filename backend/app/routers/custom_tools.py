@@ -255,9 +255,43 @@ async def execute_tool_code(code: str, params: Dict[str, Any], logs: List[str]) 
     def custom_print(*args, **kwargs):
         logs.append(" ".join(str(a) for a in args))
     
+    # Modules BLOCKED in the sandbox (dangerous/system-access modules)
+    # Everything else is allowed — this avoids whack-a-mole with internal deps
+    _blocked_modules = {
+        'os', 'sys', 'subprocess', 'shutil', 'pathlib', 'glob',
+        'socket', 'http', 'ftplib', 'smtplib', 'imaplib', 'poplib',
+        'telnetlib', 'xmlrpc', 'multiprocessing', 'threading',
+        'signal', 'ctypes', 'importlib', 'runpy', 'code', 'codeop',
+        'compile', 'compileall', 'py_compile', 'zipimport',
+        'pkgutil', 'modulefinder', 'dis', 'pickletools',
+        'pickle', 'shelve', 'marshal', 'dbm', 'sqlite3',
+        'webbrowser', 'turtle', 'tkinter', 'cmd', 'pdb',
+        'profile', 'cProfile', 'trace', 'gc', 'inspect',
+        'resource', 'pty', 'fcntl', 'termios', 'mmap',
+        'tempfile', 'io',  # io is borderline but safer to block
+    }
+    
+    # User-facing modules (documented in prompts — these are pre-loaded in namespace)
+    _user_modules = {
+        'json', 're', 'math', 'random', 'urllib', 'httpx', 'asyncio',
+        'datetime', 'hashlib', 'base64', 'html', 'collections', 'itertools',
+        'functools', 'string', 'textwrap', 'decimal', 'fractions',
+    }
+    
+    # Controlled __import__ that blocks dangerous modules but allows everything else
+    # Many stdlib functions internally call __import__ (e.g. datetime.now() imports time),
+    # so we must provide it but restrict dangerous system-access modules.
+    import builtins as _builtins
+    def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+        root = name.split('.')[0]
+        if root in _blocked_modules:
+            raise ImportError(f"Import of '{name}' is not allowed in sandbox. Use pre-loaded modules: {', '.join(sorted(_user_modules))}")
+        return _builtins.__import__(name, globals, locals, fromlist, level)
+    
     # Allowed imports and builtins
     allowed_builtins = {
         'print': custom_print,
+        '__import__': _safe_import,
         'len': len,
         'str': str,
         'int': int,
@@ -297,31 +331,85 @@ async def execute_tool_code(code: str, params: Dict[str, Any], logs: List[str]) 
         'asyncio': asyncio,
     }
     
-    # Allow common safe imports
+    # Allow common safe imports — all pre-loaded into the namespace
     try:
-        import json
-        import re
-        import math
-        import random
+        import json as _json
+        import re as _re
+        import math as _math
+        import random as _random
         import urllib.parse
-        import httpx
+        import httpx as _httpx
+        import datetime as _datetime
+        import hashlib as _hashlib
+        import base64 as _base64
+        import html as _html
         
-        namespace['json'] = json
-        namespace['re'] = re
-        namespace['math'] = math
-        namespace['random'] = random
+        namespace['json'] = _json
+        namespace['re'] = _re
+        namespace['math'] = _math
+        namespace['random'] = _random
         namespace['urllib'] = urllib
-        namespace['httpx'] = httpx
+        namespace['httpx'] = _httpx
+        namespace['datetime'] = _datetime
+        namespace['hashlib'] = _hashlib
+        namespace['base64'] = _base64
+        namespace['html'] = _html
     except ImportError:
         pass
     
-    # Check for import statements in code and provide helpful error
-    if re.search(r'^import\s+|^from\s+\w+\s+import', code, re.MULTILINE):
-        raise ValueError(
-            "Import statements are not allowed in tool code. "
-            "The following modules are pre-imported and available: json, re, math, random, urllib, httpx, asyncio. "
-            "Remove the import statements and use these modules directly."
-        )
+    # Strip import statements from code and silently allow them
+    # (since the modules are already in the namespace)
+    # This prevents the common LLM failure of generating "from datetime import datetime"
+    import_pattern = _re.compile(r'^(?:from\s+(\w+)(?:\.\w+)*\s+import\s+.+|import\s+(\w+(?:\.\w+)*)(?:\s+as\s+\w+)?)\s*$', _re.MULTILINE)
+    
+    available_modules = _user_modules
+    
+    def _check_and_strip_imports(code_text: str) -> str:
+        """Strip import statements for available modules, error on unknown ones."""
+        lines = code_text.split('\n')
+        cleaned = []
+        for line in lines:
+            stripped = line.strip()
+            match = import_pattern.match(stripped)
+            if match:
+                mod_name = match.group(1) or match.group(2)
+                # Get the root module name (e.g., 'urllib' from 'urllib.parse')
+                root_mod = mod_name.split('.')[0] if mod_name else ''
+                if root_mod in available_modules:
+                    # Silently strip — module is already in namespace
+                    # But handle "from datetime import datetime" by adding the sub-import
+                    if stripped.startswith('from '):
+                        # e.g. "from datetime import datetime, timedelta"
+                        from_match = _re.match(r'from\s+(\w+(?:\.\w+)*)\s+import\s+(.+)', stripped)
+                        if from_match:
+                            mod = from_match.group(1)
+                            imports = [s.strip().split(' as ') for s in from_match.group(2).split(',')]
+                            for imp in imports:
+                                name = imp[0].strip()
+                                alias = imp[-1].strip()
+                                # Add the imported name to namespace
+                                root = mod.split('.')[0]
+                                if root in namespace:
+                                    try:
+                                        obj = namespace[root]
+                                        for part in mod.split('.')[1:]:
+                                            obj = getattr(obj, part)
+                                        attr = getattr(obj, name, None)
+                                        if attr is not None:
+                                            namespace[alias] = attr
+                                    except (AttributeError, TypeError):
+                                        pass
+                    continue  # Strip the import line either way
+                else:
+                    raise ValueError(
+                        f"Import of '{root_mod}' is not allowed in tool code. "
+                        f"Available modules: {', '.join(sorted(available_modules))}. "
+                        f"These are pre-imported — use them directly without import statements."
+                    )
+            cleaned.append(line)
+        return '\n'.join(cleaned)
+    
+    code = _check_and_strip_imports(code)
     
     # Execute the code to define the function
     exec(code, namespace)
@@ -332,11 +420,36 @@ async def execute_tool_code(code: str, params: Dict[str, Any], logs: List[str]) 
     
     execute_func = namespace['execute']
     
+    # Inspect the function signature to handle param mismatches gracefully
+    import inspect
+    try:
+        sig = inspect.signature(execute_func)
+        func_params = sig.parameters
+        
+        # Filter params to only those the function accepts
+        # This prevents "missing required argument" when tests pass 'input'
+        # but the function takes no params, and vice versa
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD 
+            for p in func_params.values()
+        )
+        
+        if has_var_keyword:
+            # Function accepts **kwargs, pass everything
+            filtered_params = params
+        else:
+            # Only pass params that the function actually accepts
+            accepted_names = set(func_params.keys())
+            filtered_params = {k: v for k, v in params.items() if k in accepted_names}
+    except (ValueError, TypeError):
+        # If we can't inspect, pass as-is
+        filtered_params = params
+    
     # Call the function
     if asyncio.iscoroutinefunction(execute_func):
-        result = await execute_func(**params)
+        result = await execute_func(**filtered_params)
     else:
-        result = execute_func(**params)
+        result = execute_func(**filtered_params)
     
     return result
 
@@ -476,11 +589,19 @@ def compare_outputs(actual: Any, expected: Any, match_type: str, input_params: A
 
 
 def normalize_test_input(input_value: Any) -> Dict[str, Any]:
-    """Normalize test input to a dict for function execution"""
+    """Normalize test input to a dict for function execution.
+    
+    Returns {} for empty/None inputs so parameterless functions work.
+    Returns {"input": value} for simple string inputs.
+    Returns the dict as-is for dict inputs.
+    """
     if isinstance(input_value, dict):
         return input_value
+    # Empty or None input → no params (allows parameterless execute())
+    if not input_value and input_value != 0 and input_value is not False:
+        return {}
     # If it's a simple string, wrap it as 'input' parameter
-    return {"input": str(input_value) if input_value else ""}
+    return {"input": str(input_value)}
 
 
 @router.post("/{tool_id}/run-validation-tests", response_model=RunValidationTestsResponse)
@@ -639,7 +760,7 @@ The code should:
 5. Use print() for debug logging
 6. Handle errors gracefully
 
-Available imports in the sandbox: json, re, math, random, urllib, httpx, asyncio
+Available imports in the sandbox: json, re, math, random, urllib, httpx, asyncio, datetime, hashlib, base64, html
 
 RESPOND WITH ONLY THE JSON, NO OTHER TEXT."""
 
@@ -729,76 +850,250 @@ async def ai_chat(
         raise HTTPException(status_code=500, detail=f"AI chat failed: {str(e)}")
 
 
+def _analyze_test_signatures(validation_tests: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze test cases to infer parameter names, types, and tool behavior.
+    
+    Returns a dict with:
+      - param_names: list of inferred parameter names
+      - param_types: dict of name -> type
+      - input_style: 'simple_string' | 'named_params' | 'empty'
+      - output_style: 'string_contains' | 'dict_contains' | 'expression'
+      - examples: formatted examples for the prompt
+    """
+    param_names = set()
+    param_types: Dict[str, str] = {}
+    input_style = "empty"
+    output_style = "string_contains"
+    has_expression = False
+    examples = []
+    
+    for tc in validation_tests:
+        inp = tc.get("input_params", "")
+        exp = tc.get("expected_output", "")
+        match_type = tc.get("match_type", "contains")
+        
+        # Determine input style
+        if isinstance(inp, dict) and inp:
+            input_style = "named_params"
+            for k, v in inp.items():
+                param_names.add(k)
+                if isinstance(v, bool):
+                    param_types[k] = "boolean"
+                elif isinstance(v, int):
+                    param_types[k] = "integer"
+                elif isinstance(v, float):
+                    param_types[k] = "number"
+                elif isinstance(v, list):
+                    param_types[k] = "array"
+                elif isinstance(v, dict):
+                    param_types[k] = "object"
+                else:
+                    param_types[k] = "string"
+        elif isinstance(inp, str) and inp:
+            if input_style != "named_params":
+                input_style = "simple_string"
+            param_names.add("input")
+            param_types["input"] = "string"
+        
+        # Determine output style
+        if match_type == "expression":
+            has_expression = True
+        elif isinstance(exp, dict) and exp:
+            output_style = "dict_contains"
+        
+        # Build example line
+        if isinstance(inp, str):
+            inp_show = f'input="{inp}"' if inp else 'input=""'
+        elif isinstance(inp, dict):
+            inp_show = ", ".join(f'{k}={json.dumps(v)}' for k, v in inp.items())
+        else:
+            inp_show = ""
+        
+        if match_type == "expression":
+            exp_show = f"EXPRESSION: {exp if isinstance(exp, str) else json.dumps(exp)}"
+        elif isinstance(exp, str):
+            exp_show = f'output must contain "{exp}"'
+        else:
+            exp_show = f"output must contain {json.dumps(exp)}"
+        
+        examples.append(f"  execute({inp_show})  →  {exp_show}")
+    
+    if has_expression:
+        output_style = "expression"
+    
+    if not param_names:
+        param_names = {"input"}
+        param_types["input"] = "string"
+        input_style = "simple_string"
+    
+    return {
+        "param_names": sorted(param_names),
+        "param_types": param_types,
+        "input_style": input_style,
+        "output_style": output_style,
+        "examples": "\n".join(examples),
+    }
+
+
+def _build_parameter_spec(analysis: Dict[str, Any]) -> str:
+    """Build the parameter JSON spec for the generation prompt."""
+    params = []
+    for name in analysis["param_names"]:
+        ptype = analysis["param_types"].get(name, "string")
+        params.append(f'{{"name": "{name}", "type": "{ptype}", "description": "The {name} parameter", "required": true}}')
+    return ",\n        ".join(params)
+
+
+def _build_function_signature(analysis: Dict[str, Any]) -> str:
+    """Build the expected function signature."""
+    return ", ".join(analysis["param_names"])
+
+
 async def ai_generate_tool_with_tests(
     prompt: str,
     validation_tests: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Generate tool code that should pass the given validation tests"""
+    """Generate tool code that should pass the given validation tests.
+    
+    Uses a two-phase approach:
+    1. Analyze test signatures to understand parameters and expected behavior
+    2. Generate code with concrete examples showing exactly what's expected
+    """
     import ollama
     
-    # Format test cases for the prompt - handle both string and dict inputs
-    test_cases_text = ""
-    for i, tc in enumerate(validation_tests):
-        input_val = tc['input_params']
-        expected_val = tc['expected_output']
-        # If input is a string, show it simply
-        if isinstance(input_val, str):
-            input_display = f'"{input_val}"'
-        else:
-            input_display = json.dumps(input_val)
-        if isinstance(expected_val, str):
-            expected_display = f'"{expected_val}"'
-        else:
-            expected_display = json.dumps(expected_val)
-        test_cases_text += f"Test {i+1}: '{tc['name']}'\n  Input: {input_display}\n  Expected output should contain: {expected_display}\n"
+    analysis = _analyze_test_signatures(validation_tests)
+    param_spec = _build_parameter_spec(analysis)
+    func_sig = _build_function_signature(analysis)
     
-    gen_prompt = f"""You are a tool generator for an AI assistant system. Generate a Python tool based on this description:
+    # Build detailed test table
+    test_table_rows = []
+    for i, tc in enumerate(validation_tests):
+        inp = tc['input_params']
+        exp = tc['expected_output']
+        match = tc.get('match_type', 'contains')
+        
+        if isinstance(inp, str):
+            inp_display = f'"{inp}"'
+            call_display = f'execute(input="{inp}")'
+        elif isinstance(inp, dict):
+            inp_display = json.dumps(inp)
+            args = ", ".join(f'{k}={json.dumps(v)}' for k, v in inp.items())
+            call_display = f'execute({args})'
+        else:
+            inp_display = '""'
+            call_display = 'execute(input="")'
+        
+        if match == "expression":
+            exp_display = f'EXPRESSION CHECK: {exp}'
+            rule = f'The expression `{exp}` must evaluate to True when `output` is the return value'
+        elif isinstance(exp, str):
+            exp_display = f'"{exp}"'
+            rule = f'The string "{exp}" must appear somewhere in str(return_value)'
+        elif isinstance(exp, dict):
+            exp_display = json.dumps(exp)
+            rule = f'Return dict must contain keys {list(exp.keys())} with matching values'
+        else:
+            exp_display = json.dumps(exp)
+            rule = f'Return value must contain {exp_display}'
+        
+        test_table_rows.append(
+            f"  Test {i+1}: \"{tc['name']}\"\n"
+            f"    Call:     {call_display}\n"
+            f"    Expected: {exp_display}  (match_type: {match})\n"
+            f"    Rule:     {rule}"
+        )
+    
+    test_table = "\n".join(test_table_rows)
+    
+    # Explain match semantics
+    match_explanation = """MATCH SEMANTICS (how tests are validated):
+- "contains": If expected is a string, it must appear in str(output). If expected is a dict, each key/value must exist in the output dict.
+- "exact": Output must equal expected exactly.
+- "expression": The expected value is a Python expression string. Variables available: output (the return value), plus any keys from the output dict. Must evaluate to True."""
 
-"{prompt}"
+    gen_prompt = f"""/no_think
+You are a Python code generator. Your job is to write ONE Python async function that passes ALL of the test cases below.
 
-The tool must pass these validation tests:
-{test_cases_text}
+TASK DESCRIPTION:
+{prompt}
 
-IMPORTANT: The tool will receive input as a keyword argument named 'input'. 
-For example, if the test input is "hello", the function will be called as: execute(input="hello")
-The function output will be checked to see if it CONTAINS the expected value.
+FUNCTION CONTRACT:
+- Function name: execute
+- Function signature: async def execute({func_sig})
+- Must return a Python dict
+- The dict values will be checked against expected outputs
 
-You must respond with ONLY valid JSON in this exact format (no markdown, no explanation):
+{match_explanation}
+
+TEST CASES (the function must pass ALL of these):
+{test_table}
+
+SANDBOX RULES:
+- Do NOT write import statements — all modules are already pre-loaded in the global scope
+- Available modules: json, re, math, random, urllib, httpx, asyncio, datetime, hashlib, base64, html
+- For dates/times: use datetime.datetime.now(), datetime.timedelta(), etc. (the datetime MODULE is available, not the class directly)
+- Use httpx for HTTP requests: response = await httpx.AsyncClient().get(url)
+- Use print() for debug logging
+- Must handle edge cases without crashing
+
+STEP-BY-STEP:
+1. Look at the test inputs and expected outputs
+2. Figure out what transformation/logic maps each input to its expected output
+3. Write the code that performs that transformation
+4. Make sure the return dict contains the expected values
+
+RESPONSE FORMAT — respond with ONLY this JSON, no other text, no markdown:
 {{
-    "name": "tool_name_lowercase_underscores",
+    "name": "tool_name_snake_case",
     "display_name": "Human Readable Name",
     "description": "What this tool does",
     "parameters": [
-        {{"name": "input", "type": "string", "description": "The input value", "required": true}}
+        {param_spec}
     ],
-    "code": "async def execute(input):\\n    # Process the input\\n    result = input.upper()  # example\\n    return {{\\"result\\": result}}",
-    "explanation": "How the implementation handles the test cases"
+    "code": "async def execute({func_sig}):\\n    # your implementation\\n    return {{\\"result\\": value}}",
+    "explanation": "Brief explanation of the logic"
 }}
 
-CRITICAL RULES:
-1. The code MUST be an async function named 'execute'
-2. The function MUST accept 'input' as a parameter (this is what gets passed from test cases)
-3. The function should return a dict, and the expected output string should appear somewhere in the return value
-4. DO NOT use any import statements - modules are already available in the global scope
-5. These modules are pre-imported and available: json, re, math, random, urllib, httpx, asyncio
-6. Use httpx for HTTP requests if needed
-7. Handle edge cases gracefully
-
-RESPOND WITH ONLY THE JSON, NO OTHER TEXT."""
+CRITICAL: The "code" field must be a valid Python string with \\n for newlines. The function must be named `execute` and be async. Output ONLY the JSON object."""
 
     client = ollama.Client(host=settings.ollama_base_url)
     response = client.chat(
         model=settings.default_chat_model,
         messages=[{"role": "user", "content": gen_prompt}],
-        options={"temperature": 0.3}
+        options={"temperature": 0.2, "num_predict": 4096}
     )
     
     response_text = response['message']['content'].strip()
+    
+    # Strip thinking tags if present (qwen3 /no_think sometimes still emits them)
+    response_text = re.sub(r'<think>[\s\S]*?</think>', '', response_text).strip()
+    
+    # Extract JSON from response (handle markdown wrapping)
     json_match = re.search(r'\{[\s\S]*\}', response_text)
     if json_match:
         response_text = json_match.group()
     
-    return json.loads(response_text)
+    try:
+        result = json.loads(response_text)
+    except json.JSONDecodeError:
+        # Try to fix common JSON issues: unescaped newlines in code string
+        cleaned = re.sub(r'(?<!\\)\n', '\\n', response_text)
+        result = json.loads(cleaned)
+    
+    # Validate the code field contains an execute function
+    code = result.get("code", "")
+    if "def execute" not in code:
+        raise ValueError(f"Generated code missing 'execute' function. Got: {code[:200]}")
+    
+    # Ensure parameters match what tests expect
+    if not result.get("parameters"):
+        result["parameters"] = [
+            {"name": n, "type": analysis["param_types"].get(n, "string"),
+             "description": f"The {n} parameter", "required": True}
+            for n in analysis["param_names"]
+        ]
+    
+    return result
 
 
 async def ai_fix_tool_code(
@@ -806,65 +1101,121 @@ async def ai_fix_tool_code(
     description: str,
     parameters: List[Dict[str, Any]],
     failed_tests: List[Dict[str, Any]],
+    passing_tests: List[Dict[str, Any]] = None,
 ) -> str:
-    """Ask AI to fix the tool code based on failed test results"""
+    """Ask AI to fix the tool code based on failed test results.
+    
+    Provides the AI with a structured diagnosis of each failure and
+    concrete examples of what the output should look like.
+    """
     import ollama
     
-    # Format failed tests - handle string inputs
-    failed_tests_text = ""
-    for ft in failed_tests:
+    # Build a structured diagnosis for each failure
+    diagnosis_parts = []
+    for i, ft in enumerate(failed_tests):
         input_val = ft['input_params']
         expected_val = ft['expected_output']
         actual_val = ft.get('actual_output')
+        error = ft.get('error', '')
+        match_desc = ft.get('match_description', '')
+        match_type = ft.get('match_type', 'contains')
+        
         if isinstance(input_val, str):
-            input_display = f'"{input_val}"'
+            call_display = f'execute(input="{input_val}")'
+        elif isinstance(input_val, dict):
+            args = ", ".join(f'{k}={json.dumps(v)}' for k, v in input_val.items())
+            call_display = f'execute({args})'
         else:
-            input_display = json.dumps(input_val)
-        if isinstance(expected_val, str):
-            expected_display = f'"{expected_val}"'
+            call_display = 'execute()'
+        
+        diagnosis = f"FAILURE {i+1}: \"{ft['test_name']}\"\n"
+        diagnosis += f"  Call:     {call_display}\n"
+        diagnosis += f"  Expected: {json.dumps(expected_val)}  (match: {match_type})\n"
+        diagnosis += f"  Actual:   {json.dumps(actual_val)}\n"
+        
+        if error:
+            # Extract the key error line (not the full traceback)
+            error_lines = error.strip().split('\n')
+            key_error = error_lines[0] if error_lines else error
+            diagnosis += f"  Error:    {key_error}\n"
+            
+            # Classify the error type for better hints
+            if "NameError" in error:
+                diagnosis += f"  Hint:     A variable or function is not defined. No imports allowed — use pre-loaded modules.\n"
+            elif "TypeError" in error:
+                diagnosis += f"  Hint:     Wrong argument type or count. Check the function signature matches the call.\n"
+            elif "KeyError" in error:
+                diagnosis += f"  Hint:     A dictionary key is missing. Check the input parameter names.\n"
+            elif "SyntaxError" in error:
+                diagnosis += f"  Hint:     Python syntax error in the code. Check string escaping and indentation.\n"
+            elif "ValueError" in error and "import" in error.lower():
+                diagnosis += f"  Hint:     Import statements are NOT allowed. Modules json, re, math, random, httpx, asyncio are already in scope.\n"
         else:
-            expected_display = json.dumps(expected_val)
-        failed_tests_text += f"Test: '{ft['test_name']}'\n  Input: {input_display}\n  Expected output to contain: {expected_display}\n  Actual output: {json.dumps(actual_val)}\n  Error: {ft.get('error', 'None')}\n  Issue: {ft['match_description']}\n\n"
+            diagnosis += f"  Issue:    {match_desc}\n"
+            # Add concrete hint about what the output needs
+            if match_type == "contains" and isinstance(expected_val, str):
+                diagnosis += f"  Hint:     The string \"{expected_val}\" must appear in str(return_value). Consider returning {{\"{expected_val.split()[0] if ' ' in expected_val else 'result'}\": \"{expected_val}\"}} or similar.\n"
+        
+        diagnosis_parts.append(diagnosis)
     
-    fix_prompt = f"""The following Python tool code is failing some tests. Please fix it.
+    diagnoses = "\n".join(diagnosis_parts)
+    
+    # Show passing tests to avoid regressions
+    passing_note = ""
+    if passing_tests:
+        passing_lines = []
+        for pt in passing_tests[:5]:  # Show max 5 passing examples
+            inp = pt.get('input_params', '')
+            if isinstance(inp, str):
+                passing_lines.append(f"  ✓ execute(input=\"{inp}\") → {json.dumps(pt.get('actual_output', '?'))}")
+            elif isinstance(inp, dict):
+                args = ", ".join(f'{k}={json.dumps(v)}' for k, v in inp.items())
+                passing_lines.append(f"  ✓ execute({args}) → {json.dumps(pt.get('actual_output', '?'))}")
+        if passing_lines:
+            passing_note = "\nPASSING TESTS (do NOT break these):\n" + "\n".join(passing_lines) + "\n"
+    
+    fix_prompt = f"""/no_think
+You are fixing a Python function. Read the diagnosis below carefully, then output ONLY the corrected code.
 
-TOOL DESCRIPTION:
-{description}
+TOOL DESCRIPTION: {description}
 
 CURRENT CODE:
 ```python
 {current_code}
 ```
 
-FAILED TESTS:
-{failed_tests_text}
+FAILURE DIAGNOSIS:
+{diagnoses}
+{passing_note}
+RULES:
+- Must be an async function named 'execute'
+- Do NOT write import statements — modules are already in scope: json, re, math, random, httpx, asyncio, datetime, hashlib, base64, html
+- For dates: use datetime.datetime.now() (the datetime MODULE is in scope, not the class)
+- Return a dict
+- Fix ALL failures without breaking passing tests
 
-Please fix the code to pass all tests. 
-IMPORTANT: The function receives input as a keyword argument named 'input'.
-The expected output string should appear somewhere in the function's return value (usually in a dict).
-
-Respond with ONLY the fixed Python code (no markdown, no explanation).
-The code must:
-1. Be an async function named 'execute'  
-2. Accept 'input' as a parameter
-3. Return a dict containing the expected output value
-4. DO NOT use any import statements - modules are already available in the global scope
-5. These modules are pre-imported and available: json, re, math, random, urllib, httpx, asyncio
-
-RESPOND WITH ONLY THE PYTHON CODE, NO MARKDOWN BACKTICKS OR OTHER TEXT."""
+Output ONLY the Python function code. No markdown backticks, no explanation, no comments outside the function."""
 
     client = ollama.Client(host=settings.ollama_base_url)
     response = client.chat(
         model=settings.default_chat_model,
         messages=[{"role": "user", "content": fix_prompt}],
-        options={"temperature": 0.2}
+        options={"temperature": 0.15, "num_predict": 4096}
     )
     
     code = response['message']['content'].strip()
+    
+    # Strip thinking tags if present
+    code = re.sub(r'<think>[\s\S]*?</think>', '', code).strip()
+    
     # Remove markdown code blocks if present
-    code = re.sub(r'^```python\s*', '', code)
+    code = re.sub(r'^```(?:python)?\s*', '', code)
     code = re.sub(r'\s*```$', '', code)
     code = code.strip()
+    
+    # Validate we got an execute function
+    if "def execute" not in code:
+        raise ValueError(f"AI fix did not produce an execute function. Got: {code[:200]}")
     
     return code
 
@@ -1076,6 +1427,14 @@ async def autonomous_build(
                 
                 # Fix failing tests
                 failed_tests = [r for r in test_results if not r["success"]]
+                passing_tests = [r for r in test_results if r["success"]]
+                
+                # Enrich failed tests with match_type from the original test case
+                for ft in failed_tests:
+                    for tc in validation_tests:
+                        if tc["id"] == ft["test_case_id"]:
+                            ft["match_type"] = tc.get("match_type", "contains")
+                            break
                 
                 # Emit details about what we're fixing
                 yield emit_event("status", {
@@ -1091,7 +1450,8 @@ async def autonomous_build(
                         current_code,
                         description,
                         current_params,
-                        failed_tests
+                        failed_tests,
+                        passing_tests=passing_tests,
                     )
                     current_code = fixed_code
                     

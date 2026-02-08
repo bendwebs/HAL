@@ -138,6 +138,13 @@ class Database:
             IndexModel([("is_enabled", ASCENDING)]),
         ])
         
+        # Video jobs collection
+        await self.db.video_jobs.create_indexes([
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("created_at", ASCENDING)]),
+            IndexModel([("status", ASCENDING)]),
+        ])
+        
         logger.info("Database indexes created")
     
     # ============== Collection Accessors ==============
@@ -197,6 +204,10 @@ class Database:
     @property
     def mcp_servers(self):
         return self.db.mcp_servers
+    
+    @property
+    def video_jobs(self):
+        return self.db.video_jobs
 
 
 # Global database instance

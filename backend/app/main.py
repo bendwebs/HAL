@@ -48,7 +48,10 @@ async def lifespan(app: FastAPI):
     logger.info("RAG engine initialized")
     
     logger.info("Initializing memory system...")
-    get_memory_system()
+    try:
+        get_memory_system()
+    except Exception as e:
+        logger.warning(f"Memory system init failed (degraded mode): {e}")
     logger.info("Memory system initialized")
     
     logger.info("Initializing agent system...")

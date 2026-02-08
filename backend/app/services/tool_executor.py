@@ -13,9 +13,36 @@ class ToolExecutor:
     def __init__(self):
         self.builtin_tools = self._define_builtin_tools()
     
+    # Tools that are always injected into the system prompt and hidden from user toggle
+    ALWAYS_ON_TOOLS = {"memory_recall", "memory_store", "document_search", "get_current_date", "get_current_time"}
+    
     def _define_builtin_tools(self) -> Dict[str, Dict[str, Any]]:
         """Define built-in tools"""
         return {
+            "get_current_date": {
+                "name": "get_current_date",
+                "display_name": "Get Current Date",
+                "description": "Get the current date",
+                "icon": "📅",
+                "permission_level": "always_on",
+                "schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            "get_current_time": {
+                "name": "get_current_time",
+                "display_name": "Get Current Time",
+                "description": "Get the current time",
+                "icon": "🕐",
+                "permission_level": "always_on",
+                "schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
             "document_search": {
                 "name": "document_search",
                 "display_name": "Document Search",
@@ -163,6 +190,10 @@ class ToolExecutor:
             return await self._execute_memory_recall(parameters, user_id)
         elif tool_name == "memory_store":
             return await self._execute_memory_store(parameters, user_id, context)
+        elif tool_name == "get_current_date":
+            return await self._execute_get_current_date(parameters)
+        elif tool_name == "get_current_time":
+            return await self._execute_get_current_time(parameters)
         else:
             return {"error": f"Unknown tool: {tool_name}"}
     
@@ -205,14 +236,44 @@ class ToolExecutor:
         )
         return {"memory_id": memory_id}
     
+    async def _execute_get_current_date(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return the current date"""
+        from datetime import datetime as dt
+        now = dt.now()
+        return {
+            "date": now.strftime("%Y-%m-%d"),
+            "day_of_week": now.strftime("%A"),
+            "formatted": now.strftime("%A, %B %d, %Y")
+        }
+    
+    async def _execute_get_current_time(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return the current time"""
+        from datetime import datetime as dt
+        now = dt.now()
+        return {
+            "time": now.strftime("%H:%M:%S"),
+            "formatted": now.strftime("%I:%M %p"),
+            "timezone": "local"
+        }
+    
     async def initialize_tools_in_db(self):
-        """Initialize built-in tools in database"""
+        """Initialize built-in tools in database.
+        
+        Tools in ALWAYS_ON_TOOLS get permission_level='always_on' forced on every startup.
+        New tools use permission_level from their definition or default to 'user_toggle'.
+        """
         for name, tool in self.builtin_tools.items():
+            # Determine permission level: use tool definition, or always_on if in the set
+            if name in self.ALWAYS_ON_TOOLS:
+                perm = "always_on"
+            else:
+                perm = tool.get("permission_level", "user_toggle")
+            
             existing = await database.tools.find_one({"name": name})
             if not existing:
                 await database.tools.insert_one({
                     **tool,
-                    "permission_level": "user_toggle",
+                    "permission_level": perm,
                     "default_enabled": True,
                     "config": {},
                     "usage_count": 0,
@@ -222,15 +283,20 @@ class ToolExecutor:
                 })
             else:
                 # Update existing tool definitions (in case they changed)
+                update_fields = {
+                    "display_name": tool["display_name"],
+                    "description": tool["description"],
+                    "icon": tool["icon"],
+                    "schema": tool["schema"],
+                    "updated_at": datetime.utcnow()
+                }
+                # Always force permission_level for ALWAYS_ON tools
+                if name in self.ALWAYS_ON_TOOLS:
+                    update_fields["permission_level"] = "always_on"
+                
                 await database.tools.update_one(
                     {"name": name},
-                    {"$set": {
-                        "display_name": tool["display_name"],
-                        "description": tool["description"],
-                        "icon": tool["icon"],
-                        "schema": tool["schema"],
-                        "updated_at": datetime.utcnow()
-                    }}
+                    {"$set": update_fields}
                 )
     
     async def record_tool_usage(self, tool_name: str):

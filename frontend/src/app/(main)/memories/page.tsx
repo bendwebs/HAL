@@ -308,7 +308,7 @@ export default function MemoriesPage() {
   };
 
   const handlePreviewChat = async (chatId: string) => {
-    try { const preview = await chats.getPreview(chatId); setPreviewChat(preview); }
+    try { const preview = await chats.getPreview(chatId); setPreviewChat({ ...preview, id: preview.chat_id }); }
     catch (err) { toast.error('Failed to load chat preview'); }
   };
 
@@ -511,7 +511,7 @@ export default function MemoriesPage() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3 text-sm">
                             {memory.score !== undefined && <span className="text-text-muted">Score: {(memory.score * 100).toFixed(0)}%</span>}
-                            {memory.categories?.length > 0 && <span className="flex items-center gap-1 text-text-muted"><Tag className="w-3 h-3" />{memory.categories.join(', ')}</span>}
+                            {(memory.categories?.length ?? 0) > 0 && <span className="flex items-center gap-1 text-text-muted"><Tag className="w-3 h-3" />{memory.categories!.join(', ')}</span>}
                             {memory.created_at && <span className="flex items-center gap-1 text-text-muted"><Clock className="w-3 h-3" />{formatRelativeTime(memory.created_at)}</span>}
                           </div>
                           <div className="flex items-center gap-1">

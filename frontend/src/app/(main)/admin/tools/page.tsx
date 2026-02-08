@@ -59,7 +59,7 @@ const PERMISSION_LEVELS = [
   { value: 'admin_only', label: 'Admin Only', description: 'Only admins can use', color: 'text-amber-400', bg: 'bg-amber-500/20' },
   { value: 'opt_in', label: 'Opt-In', description: 'Users must enable manually', color: 'text-blue-400', bg: 'bg-blue-500/20' },
   { value: 'user_toggle', label: 'User Toggle', description: 'Enabled by default', color: 'text-green-400', bg: 'bg-green-500/20' },
-  { value: 'always_on', label: 'Always On', description: 'Cannot be disabled', color: 'text-purple-400', bg: 'bg-purple-500/20' },
+  { value: 'always_on', label: 'Always On', description: 'Auto-injected into every chat, cannot be disabled by users', color: 'text-purple-400', bg: 'bg-purple-500/20' },
 ];
 
 const TOOL_CATEGORIES = [
@@ -304,6 +304,17 @@ export default function AdminToolsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update tool');
       toast.error('Failed to update tool');
+    }
+  };
+
+  const deleteTool = async (toolId: string, toolName: string) => {
+    if (!confirm(`Delete "${toolName}"? This cannot be undone.`)) return;
+    try {
+      await admin.tools.delete(toolId);
+      toast.success(`Deleted ${toolName}`);
+      loadTools();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete tool');
     }
   };
 
@@ -594,14 +605,22 @@ export default function AdminToolsPage() {
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-text-muted">{tool.usage_count} uses</span>
                         
-                        <div className="relative">
+                        <div className="flex items-center gap-1">
                           <button
-                            onClick={() => setOpenDropdown(isDropdownOpen ? null : tool.id)}
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${permInfo.bg} ${permInfo.color}`}
+                            onClick={() => deleteTool(tool.id, tool.display_name)}
+                            className="p-1 text-text-muted hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                            title="Delete tool"
                           >
-                            {permInfo.label}
-                            <ChevronDown className={`w-3 h-3 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
+                          <div className="relative">
+                            <button
+                              onClick={() => setOpenDropdown(isDropdownOpen ? null : tool.id)}
+                              className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${permInfo.bg} ${permInfo.color}`}
+                            >
+                              {permInfo.label}
+                              <ChevronDown className={`w-3 h-3 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                            </button>
                           
                           {isDropdownOpen && (
                             <>
@@ -622,6 +641,7 @@ export default function AdminToolsPage() {
                               </div>
                             </>
                           )}
+                        </div>
                         </div>
                       </div>
                     </div>
@@ -655,6 +675,14 @@ export default function AdminToolsPage() {
                       </div>
                       
                       <span className="text-xs text-text-muted whitespace-nowrap">{tool.usage_count} uses</span>
+                      
+                      <button
+                        onClick={() => deleteTool(tool.id, tool.display_name)}
+                        className="p-1.5 text-text-muted hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                        title="Delete tool"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                       
                       <div className="relative">
                         <button

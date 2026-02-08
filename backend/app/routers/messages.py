@@ -26,10 +26,12 @@ router = APIRouter(prefix="/chats/{chat_id}/messages", tags=["Messages"])
 
 
 async def get_allowed_tools(user: Dict[str, Any], requested_tools: Optional[List[str]] = None) -> Optional[List[str]]:
-    """Filter tools based on admin permission levels.
+    """Filter tools based on admin permission levels and inject ALWAYS_ON tools.
     
-    This ensures that even if a chat has a DISABLED tool in its enabled_tools list,
-    it won't be passed to the agent. Admin permissions always take precedence.
+    This ensures that:
+    - DISABLED tools are never passed to the agent
+    - ADMIN_ONLY tools are only available to admins
+    - ALWAYS_ON tools are ALWAYS included regardless of chat settings
     
     Args:
         user: Current user dict
@@ -39,8 +41,6 @@ async def get_allowed_tools(user: Dict[str, Any], requested_tools: Optional[List
         Filtered list of tool names that the user is actually allowed to use
     """
     if requested_tools is None:
-        # If no tools specified, return None to let agent use defaults
-        # But we still need to filter out DISABLED tools from defaults
         requested_tools = [
             "web_search", "youtube_search", "generate_image", 
             "document_search", "memory_recall", "memory_store", "calculator"
@@ -48,12 +48,29 @@ async def get_allowed_tools(user: Dict[str, Any], requested_tools: Optional[List
     
     is_admin = user.get("role") == UserRole.ADMIN
     
-    # Get all tools with their permission levels from database
-    tools = await database.tools.find(
-        {"name": {"$in": requested_tools}}
-    ).to_list(100)
+    # Get ALL tools from DB (not just requested) so we can find ALWAYS_ON tools
+    all_tools = await database.tools.find().to_list(200)
     
-    tool_permissions = {t["name"]: t.get("permission_level", ToolPermissionLevel.USER_TOGGLE) for t in tools}
+    # Also check custom tools for ALWAYS_ON
+    all_custom_tools = await database.custom_tools.find({
+        "status": "released"
+    }).to_list(100)
+    
+    tool_permissions = {}
+    always_on_tools = []
+    
+    for t in all_tools:
+        perm = t.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
+        tool_permissions[t["name"]] = perm
+        # Collect ALWAYS_ON tools - these get injected regardless of chat settings
+        if perm == ToolPermissionLevel.ALWAYS_ON:
+            always_on_tools.append(t["name"])
+    
+    for t in all_custom_tools:
+        perm = t.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
+        tool_permissions[t["name"]] = perm
+        if perm == ToolPermissionLevel.ALWAYS_ON:
+            always_on_tools.append(t["name"])
     
     allowed = []
     for tool_name in requested_tools:
@@ -72,7 +89,17 @@ async def get_allowed_tools(user: Dict[str, Any], requested_tools: Optional[List
         # All other permission levels: USER_TOGGLE, OPT_IN, ALWAYS_ON are allowed
         allowed.append(tool_name)
     
-    logger.info(f"[TOOL FILTER] Requested: {requested_tools}, Allowed: {allowed}")
+    # Inject ALWAYS_ON tools that aren't already in the list
+    for tool_name in always_on_tools:
+        if tool_name not in allowed:
+            # ADMIN_ONLY check still applies even for ALWAYS_ON
+            perm = tool_permissions.get(tool_name)
+            if perm == ToolPermissionLevel.ADMIN_ONLY and not is_admin:
+                continue
+            allowed.append(tool_name)
+            logger.info(f"[TOOL FILTER] Injecting ALWAYS_ON tool '{tool_name}' (not in chat's enabled_tools)")
+    
+    logger.info(f"[TOOL FILTER] Requested: {requested_tools}, Always-on: {always_on_tools}, Final allowed: {allowed}")
     return allowed if allowed else None
 
 

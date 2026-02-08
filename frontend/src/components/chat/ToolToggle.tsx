@@ -62,12 +62,11 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   spawn_agent: 'Sub-agents',
 };
 
-const DEFAULT_ENABLED_TOOLS = [
+// Fallback only used before tools are loaded from API
+// Does NOT include ALWAYS_ON tools (memory, documents, date/time) — those are auto-injected by backend
+const FALLBACK_ENABLED_TOOLS = [
   'web_search', 
   'youtube_search', 
-  'document_search', 
-  'memory_recall', 
-  'memory_store', 
   'calculator',
   'generate_image'
 ];
@@ -82,7 +81,7 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [tools, setTools] = useState<Tool[]>([]);
   const [enabledTools, setEnabledTools] = useState<string[]>(
-    chat.enabled_tools ?? DEFAULT_ENABLED_TOOLS
+    chat.enabled_tools ?? FALLBACK_ENABLED_TOOLS
   );
   const [collapsedCategories, setCollapsedCategories] = useState<Set<ToolCategory>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
@@ -92,13 +91,27 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
   }, []);
 
   useEffect(() => {
-    setEnabledTools(chat.enabled_tools ?? DEFAULT_ENABLED_TOOLS);
+    setEnabledTools(chat.enabled_tools ?? getDefaultsFromTools(tools));
   }, [chat.enabled_tools]);
+
+  // Derive default enabled tools from API response (respects permission_level)
+  const getDefaultsFromTools = (toolList: Tool[]): string[] => {
+    if (toolList.length === 0) return FALLBACK_ENABLED_TOOLS;
+    return toolList.filter(t => t.is_enabled).map(t => t.name);
+  };
 
   const loadTools = async () => {
     try {
       const data = await toolsApi.list();
-      setTools(data);
+      // Filter out ALWAYS_ON tools — they're auto-injected by the backend
+      // and should not clutter the user's toggle panel
+      const toggleableData = data.filter((t: Tool) => t.permission_level !== 'always_on');
+      setTools(toggleableData);
+      // If chat has no explicit enabled_tools, derive from API defaults
+      if (!chat.enabled_tools) {
+        const apiDefaults = toggleableData.filter((t: Tool) => t.is_enabled).map((t: Tool) => t.name);
+        setEnabledTools(apiDefaults);
+      }
     } catch (err) {
       console.error('Failed to load tools:', err);
     }
@@ -323,6 +336,7 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
                             const ToolIcon = TOOL_ICONS[tool.name] || (tool.mcp_server_id ? Server : Wrench);
                             const isEnabled = enabledTools.includes(tool.name) || (!tool.can_toggle && tool.is_enabled);
                             const canToggle = tool.can_toggle;
+                            const isAlwaysOn = !canToggle && tool.is_enabled;
                             const description = TOOL_DESCRIPTIONS[tool.name] || tool.description || '';
                             
                             return (
@@ -330,8 +344,9 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
                                 key={tool.name}
                                 onClick={() => canToggle && toggleTool(tool.name)}
                                 disabled={!canToggle}
+                                title={isAlwaysOn ? 'Always active — cannot be toggled' : undefined}
                                 className={`w-full px-2 py-1.5 flex items-center gap-2 rounded transition-colors ${
-                                  canToggle ? 'hover:bg-surface cursor-pointer' : 'cursor-not-allowed opacity-60'
+                                  canToggle ? 'hover:bg-surface cursor-pointer' : 'cursor-default opacity-70'
                                 }`}
                               >
                                 <div className={`w-6 h-6 rounded flex items-center justify-center ${

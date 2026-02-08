@@ -21,7 +21,8 @@ import {
   PinOff,
   MoreVertical,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Youtube
 } from 'lucide-react';
 import { useEffect, useState, useRef } from 'react';
 import { ChatListItem } from '@/types';
@@ -31,6 +32,7 @@ const navItems = [
   { href: '/chat', icon: MessageSquare, label: 'Chats' },
   { href: '/converse', icon: Mic, label: 'Converse' },
   { href: '/generate', icon: ImageIcon, label: 'Generate' },
+  { href: '/video', icon: Youtube, label: 'Video' },
   { href: '/library', icon: FolderOpen, label: 'Library' },
   { href: '/memories', icon: Brain, label: 'Memories' },
   { href: '/personas', icon: Users, label: 'Personas' },

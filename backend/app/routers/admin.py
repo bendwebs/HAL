@@ -193,6 +193,29 @@ async def admin_update_tool(
     return {"message": "Tool updated", "updates_applied": update_data}
 
 
+@router.delete("/tools/{tool_id}")
+async def admin_delete_tool(
+    tool_id: str,
+    admin: Dict[str, Any] = Depends(get_current_admin),
+):
+    """Delete a tool (built-in or custom). Use with caution."""
+    # Try built-in tools first
+    tool = await database.tools.find_one({"_id": ObjectId(tool_id)})
+    if tool:
+        await database.tools.delete_one({"_id": ObjectId(tool_id)})
+        logger.info(f"[ADMIN TOOL DELETE] Deleted built-in tool: {tool.get('name')} (id={tool_id})")
+        return {"message": f"Deleted built-in tool '{tool.get('name')}'"}
+    
+    # Try custom tools
+    custom_tool = await database.custom_tools.find_one({"_id": ObjectId(tool_id)})
+    if custom_tool:
+        await database.custom_tools.delete_one({"_id": ObjectId(tool_id)})
+        logger.info(f"[ADMIN TOOL DELETE] Deleted custom tool: {custom_tool.get('name')} (id={tool_id})")
+        return {"message": f"Deleted custom tool '{custom_tool.get('name')}'"}
+    
+    raise HTTPException(status_code=404, detail="Tool not found")
+
+
 # ============== Alert Management ==============
 
 @router.post("/alerts", response_model=AlertResponse)
