@@ -10,7 +10,7 @@ import ChatMessage from '@/components/chat/ChatMessage';
 import ChatInput from '@/components/chat/ChatInput';
 import ChatHeader from '@/components/chat/ChatHeader';
 import VideoPlayer, { VideoPlayerVideo } from '@/components/chat/VideoPlayer';
-import { Loader2, Brain, Sparkles, X, Check, Trash2, ChevronUp } from 'lucide-react';
+import { Loader2, Brain, Sparkles, X, Check, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 // YouTube video interface for tracking search results
@@ -51,6 +51,8 @@ export default function ChatPage() {
   const [activeVideo, setActiveVideo] = useState<VideoPlayerVideo | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   useEffect(() => {
     loadChat();
@@ -59,6 +61,36 @@ export default function ChatPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, streamingMessage]);
+
+  // Track scroll position for scroll-to-bottom button
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      setShowScrollButton(distanceFromBottom > 200);
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Keyboard shortcut: "/" to focus input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const target = e.target as HTMLElement;
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+        if (!isInput) {
+          e.preventDefault();
+          const textarea = document.querySelector('textarea[placeholder*="Message"]') as HTMLTextAreaElement;
+          textarea?.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Extract YouTube results from existing messages on load
   useEffect(() => {
@@ -443,7 +475,7 @@ export default function ChatPage() {
     <div className="h-full flex flex-col">
       <ChatHeader chat={chat} onUpdate={setChat} contextRefreshTrigger={contextRefreshTrigger} />
       
-      <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-6 relative">
         <div className="max-w-3xl mx-auto space-y-6">
           {/* Load older messages */}
           {hasOlderMessages && messages.length > 0 && (
@@ -582,8 +614,19 @@ export default function ChatPage() {
           
           <div ref={messagesEndRef} />
         </div>
+
+        {/* Scroll to bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-4 right-6 p-2.5 bg-bg-elevated border border-border rounded-full shadow-lg hover:bg-surface-hover transition-all animate-fade-in z-10"
+            title="Scroll to bottom"
+          >
+            <ChevronDown className="w-5 h-5 text-text-secondary" />
+          </button>
+        )}
       </div>
-      
+
       <ChatInput
         onSend={handleSendMessage}
         disabled={isSending}
