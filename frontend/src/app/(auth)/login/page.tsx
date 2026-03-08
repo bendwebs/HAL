@@ -33,10 +33,13 @@ export default function LoginPage() {
   };
   
   return (
-    <main className="min-h-screen flex items-center justify-center bg-bg-primary p-4">
-      <div className="w-full max-w-sm">
+    <main className="min-h-screen flex items-center justify-center bg-[#0a0a1a] p-4 relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-b from-purple-900/10 via-transparent to-purple-900/10 pointer-events-none" />
+      <div className="w-full max-w-sm relative z-10 animate-fade-in">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-3">🤖</div>
+          <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+            <span className="text-4xl">🤖</span>
+          </div>
           <h1 className="text-2xl font-bold text-text-primary">Welcome to HAL</h1>
           <p className="text-text-secondary mt-1">Sign in to continue</p>
         </div>
@@ -58,7 +61,7 @@ export default function LoginPage() {
               onChange={(e) => setUsername(e.target.value)}
               className="w-full px-4 py-3 rounded-lg bg-bg-tertiary border border-border 
                          text-text-primary placeholder-text-muted
-                         focus:outline-none focus:border-accent transition-colors"
+                         focus:outline-none focus:border-accent focus:shadow-[0_0_20px_rgba(20,184,166,0.15)] transition-all duration-200"
               placeholder="Enter username"
               required
             />
@@ -74,7 +77,7 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-3 rounded-lg bg-bg-tertiary border border-border 
                          text-text-primary placeholder-text-muted
-                         focus:outline-none focus:border-accent transition-colors"
+                         focus:outline-none focus:border-accent focus:shadow-[0_0_20px_rgba(20,184,166,0.15)] transition-all duration-200"
               placeholder="Enter password"
               required
             />
@@ -83,8 +86,9 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-3 rounded-lg bg-accent hover:bg-accent-hover 
-                       text-white font-medium transition-colors
+            className="w-full py-3 rounded-xl bg-accent hover:bg-accent-hover
+                       text-white font-medium transition-all duration-200
+                       hover:shadow-lg hover:shadow-accent/20
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? 'Signing in...' : 'Sign In'}

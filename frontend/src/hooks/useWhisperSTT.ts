@@ -58,11 +58,10 @@ export function useWhisperSTT(options: UseWhisperSTTOptions = {}): UseWhisperSTT
 
   // Check browser support
   useEffect(() => {
-    const supported = !!(
-      navigator.mediaDevices?.getUserMedia &&
-      window.MediaRecorder &&
-      window.AudioContext
-    );
+    const supported =
+      typeof navigator.mediaDevices?.getUserMedia === 'function' &&
+      typeof window.MediaRecorder !== 'undefined' &&
+      typeof window.AudioContext !== 'undefined';
     setIsSupported(supported);
   }, []);
 

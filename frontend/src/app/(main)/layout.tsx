@@ -65,10 +65,12 @@ export default function MainLayout({
 
   if (!hydrated || isLoading || !isAuthenticated) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg-primary">
-        <div className="text-center">
-          <div className="text-4xl mb-3 animate-pulse">🤖</div>
-          <p className="text-text-secondary">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center bg-[#0a0a1a]">
+        <div className="text-center animate-fade-in">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+            <span className="text-3xl animate-pulse">🤖</span>
+          </div>
+          <div className="skeleton h-4 w-24 mx-auto" />
         </div>
       </div>
     );
@@ -187,7 +189,7 @@ export default function MainLayout({
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-hidden pb-16 md:pb-0">
+        <main className="flex-1 overflow-hidden pb-16 md:pb-0 page-transition">
           {children}
         </main>
 

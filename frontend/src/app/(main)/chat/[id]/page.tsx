@@ -374,8 +374,35 @@ export default function ChatPage() {
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-accent" />
+      <div className="h-full flex flex-col">
+        {/* Header skeleton */}
+        <div className="h-14 border-b border-border bg-bg-secondary/50 flex items-center px-4 gap-3">
+          <div className="skeleton h-5 w-48" />
+          <div className="flex-1" />
+          <div className="skeleton h-5 w-5 rounded-full" />
+        </div>
+        {/* Messages skeleton */}
+        <div className="flex-1 overflow-hidden px-4 py-6">
+          <div className="max-w-3xl mx-auto space-y-6">
+            {[1, 2, 3].map(i => (
+              <div key={i} className={`flex gap-3 ${i % 2 === 0 ? 'justify-end' : ''}`}>
+                {i % 2 !== 0 && <div className="skeleton w-8 h-8 rounded-full flex-shrink-0" />}
+                <div className={`space-y-2 ${i % 2 === 0 ? 'items-end' : ''}`} style={{ maxWidth: '70%' }}>
+                  <div className={`skeleton h-4 ${i % 2 === 0 ? 'w-32' : 'w-48'}`} />
+                  <div className={`skeleton h-4 ${i % 2 === 0 ? 'w-24' : 'w-64'}`} />
+                  {i % 2 !== 0 && <div className="skeleton h-4 w-40" />}
+                </div>
+                {i % 2 === 0 && <div className="skeleton w-8 h-8 rounded-full flex-shrink-0" />}
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Input skeleton */}
+        <div className="border-t border-border bg-bg-secondary p-4">
+          <div className="max-w-3xl mx-auto">
+            <div className="skeleton h-12 w-full rounded-xl" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -395,27 +422,30 @@ export default function ChatPage() {
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
           {messages.length === 0 && !streamingMessage && (
-            <div className="text-center py-12">
-              <div className="text-5xl mb-4">🤖</div>
+            <div className="text-center py-16 animate-fade-in">
+              <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+                <span className="text-3xl">🤖</span>
+              </div>
               <h2 className="text-xl font-semibold text-text-primary mb-2">
                 How can I help you?
               </h2>
-              <p className="text-text-secondary">
-                Ask me anything or upload documents for analysis
+              <p className="text-text-secondary text-sm max-w-md mx-auto">
+                Ask me anything, upload documents for analysis, or use tools to search the web
               </p>
             </div>
           )}
           
-          {messages.map(message => (
-            <ChatMessage
-              key={message.id}
-              message={message}
-              showThinking={showThinking}
-              showActions={showActions}
-              ttsEnabled={chat.tts_enabled}
-              ttsVoiceId={chat.tts_voice_id || undefined}
-              onVideoSelect={handleVideoSelect}
-            />
+          {messages.map((message, index) => (
+            <div key={message.id} className="animate-message-in" style={{ animationDelay: `${Math.min(index * 30, 300)}ms` }}>
+              <ChatMessage
+                message={message}
+                showThinking={showThinking}
+                showActions={showActions}
+                ttsEnabled={chat.tts_enabled}
+                ttsVoiceId={chat.tts_voice_id || undefined}
+                onVideoSelect={handleVideoSelect}
+              />
+            </div>
           ))}
           
           {streamingMessage && (

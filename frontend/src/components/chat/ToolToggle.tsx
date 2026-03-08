@@ -186,7 +186,7 @@ export default function ToolToggle({ chat, onUpdate }: ToolToggleProps) {
     
     let newEnabled: string[];
     if (enable) {
-      newEnabled = [...new Set([...enabledTools, ...toolNames])];
+      newEnabled = Array.from(new Set([...enabledTools, ...toolNames]));
     } else {
       newEnabled = enabledTools.filter(t => !toolNames.includes(t));
     }

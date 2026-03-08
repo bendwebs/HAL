@@ -358,14 +358,18 @@ const ChatMessage = memo(function ChatMessage({
                 </ReactMarkdown>
               ) : isStreaming ? (
                 <span className="inline-flex items-center gap-2 text-text-muted">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating response...
+                  <span className="flex gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" style={{ animationDelay: '300ms' }} />
+                  </span>
+                  Thinking...
                 </span>
               ) : null}
             </div>
 
             {isStreaming && message.content && (
-              <span className="inline-block w-2 h-4 bg-current animate-pulse ml-1" />
+              <span className="inline-block w-0.5 h-5 bg-accent animate-cursor ml-0.5 -mb-1" />
             )}
           </div>
         )}

@@ -262,8 +262,11 @@ export default function Sidebar() {
         
         {isLoading ? (
           <div className="space-y-2">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-10 bg-surface animate-pulse rounded-lg" />
+            {[1, 2, 3, 4, 5].map(i => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2">
+                <div className="skeleton w-4 h-4 rounded flex-shrink-0" />
+                <div className={`skeleton h-4 ${i % 2 === 0 ? 'w-28' : 'w-36'}`} />
+              </div>
             ))}
           </div>
         ) : recentChats.length === 0 && pinnedChats.length === 0 ? (

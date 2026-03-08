@@ -81,7 +81,7 @@ export default function ChatHeader({ chat, onUpdate, contextRefreshTrigger = 0 }
   const handlePersonaChange = async (personaId: string | null) => {
     try {
       const updated = await chatsApi.update(chat.id, { 
-        persona_id: personaId 
+        persona_id: personaId || undefined
       });
       onUpdate(updated);
       const personaName = personaId 

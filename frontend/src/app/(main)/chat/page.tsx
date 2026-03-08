@@ -179,7 +179,17 @@ export default function ChatListPage() {
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3, 4, 5, 6].map(i => (
-            <div key={i} className="h-32 bg-surface animate-pulse rounded-xl" />
+            <div key={i} className="p-4 border border-border rounded-xl">
+              <div className="flex items-start justify-between mb-3">
+                <div className="skeleton w-5 h-5 rounded" />
+                <div className="skeleton w-4 h-4 rounded" />
+              </div>
+              <div className="skeleton h-5 w-3/4 mb-2" />
+              <div className="flex justify-between">
+                <div className="skeleton h-4 w-20" />
+                <div className="skeleton h-4 w-16" />
+              </div>
+            </div>
           ))}
         </div>
       ) : chatList.length === 0 ? (

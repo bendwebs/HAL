@@ -229,7 +229,7 @@ export default function ContextWindowManager({
     if (!analysis || selectedGroups.size === 0) return;
     
     const messageIds: string[] = [];
-    for (const groupId of selectedGroups) {
+    for (const groupId of Array.from(selectedGroups)) {
       const group = analysis.groups.find(g => g.id === groupId);
       if (group) {
         messageIds.push(...group.message_ids);

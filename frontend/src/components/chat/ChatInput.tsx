@@ -221,7 +221,7 @@ export default function ChatInput({ onSend, disabled, canWrite = true, chat, onC
             </div>
             
             {/* Input */}
-            <div className="flex-1 relative">
+            <div className="flex-1 relative input-glow rounded-xl transition-all duration-200">
               <textarea
                 ref={textareaRef}
                 value={message}
@@ -230,16 +230,20 @@ export default function ChatInput({ onSend, disabled, canWrite = true, chat, onC
                 placeholder={attachedDocs.length > 0 ? "Ask about your documents..." : "Message HAL..."}
                 disabled={disabled}
                 rows={1}
-                className="w-full px-4 py-3 bg-bg-tertiary border border-border rounded-xl text-text-primary placeholder-text-muted resize-none focus:outline-none focus:border-accent transition-colors disabled:opacity-50"
+                className="w-full px-4 py-3 bg-bg-tertiary border border-border rounded-xl text-text-primary placeholder-text-muted resize-none focus:outline-none focus:border-transparent transition-colors disabled:opacity-50"
                 style={{ maxHeight: '200px' }}
               />
             </div>
-            
+
             {/* Send button */}
             <button
               type="submit"
               disabled={!message.trim() || disabled}
-              className="p-3 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`p-3 rounded-xl transition-all duration-200 ${
+                message.trim() && !disabled
+                  ? 'bg-accent hover:bg-accent-hover text-white shadow-lg shadow-accent/20 hover:shadow-accent/30 scale-100 hover:scale-105'
+                  : 'bg-surface text-text-muted cursor-not-allowed'
+              }`}
             >
               <Send className="w-5 h-5" />
             </button>
