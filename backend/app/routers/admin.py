@@ -1,6 +1,6 @@
 """Admin Router - Administrative functions"""
 
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Body
 from bson import ObjectId
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -288,7 +288,7 @@ async def get_system_config(
 @router.put("/config/{key}")
 async def update_system_config(
     key: str,
-    value: Any,
+    value: Any = Body(...),
     admin: Dict[str, Any] = Depends(get_current_admin),
 ):
     """Update system configuration"""
@@ -304,4 +304,4 @@ async def update_system_config(
         upsert=True
     )
     
-    return {"message": "Configuration updated"}
+    return {"message": "Configuration updated", "key": key, "value": value}

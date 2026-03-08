@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/auth';
+import { auth as authApi } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,6 +12,13 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
+  
+  useEffect(() => {
+    authApi.registrationStatus()
+      .then(res => setRegistrationEnabled(res.registration_enabled))
+      .catch(() => setRegistrationEnabled(true)); // Default to showing if check fails
+  }, []);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,12 +91,14 @@ export default function LoginPage() {
           </button>
         </form>
         
-        <p className="text-center mt-6 text-text-secondary text-sm">
-          Don't have an account?{' '}
-          <Link href="/register" className="text-accent hover:underline">
-            Create one
-          </Link>
-        </p>
+        {registrationEnabled && (
+          <p className="text-center mt-6 text-text-secondary text-sm">
+            Don't have an account?{' '}
+            <Link href="/register" className="text-accent hover:underline">
+              Create one
+            </Link>
+          </p>
+        )}
       </div>
     </main>
   );

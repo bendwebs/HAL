@@ -2,11 +2,30 @@
  * API Client for HAL Backend
  */
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+function getApiUrl(): string {
+  // Server-side: use env var
+  if (typeof window === 'undefined') {
+    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  }
+  
+  // Client-side: if accessed via tunnel domain, use same origin for API
+  // This assumes the tunnel routes /api/* to the backend
+  const hostname = window.location.hostname;
+  
+  if (hostname === 'hal.bendwebs.com') {
+    // When accessed via tunnel, API calls go through the same tunnel origin
+    return window.location.origin;
+  }
+  
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+}
+
+export const API_URL = getApiUrl();
 
 // Debug log - will show in browser console
 if (typeof window !== 'undefined') {
   console.log('[HAL API] Using API URL:', API_URL);
+  console.log('[HAL API] Current hostname:', window.location.hostname);
 }
 
 // Helper to get token from zustand persisted store
@@ -77,6 +96,9 @@ export const auth = {
       method: 'POST',
       body: JSON.stringify({ username, password, display_name }),
     }),
+  
+  registrationStatus: () =>
+    request<{ registration_enabled: boolean }>('/api/auth/registration-status'),
     
   me: () => request<any>('/api/auth/me'),
   

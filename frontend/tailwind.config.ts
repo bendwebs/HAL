@@ -50,9 +50,22 @@ const config: Config = {
         lg: "12px",
         xl: "16px",
       },
+      typography: {
+        DEFAULT: {
+          css: {
+            'pre code': {
+              padding: '0',
+              background: 'transparent',
+              border: 'none',
+            },
+          },
+        },
+      },
     },
   },
-  plugins: [],
+  plugins: [
+    require('@tailwindcss/typography'),
+  ],
 };
 
 export default config;

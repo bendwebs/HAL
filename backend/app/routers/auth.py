@@ -15,9 +15,26 @@ from app.models.user import (
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+@router.get("/registration-status")
+async def registration_status():
+    """Check if registration is currently enabled (public endpoint, no auth)"""
+    config = await database.system_config.find_one({"key": "registration_enabled"})
+    # Default to enabled if no config exists
+    enabled = config["value"] if config else True
+    return {"registration_enabled": enabled}
+
+
 @router.post("/register", response_model=TokenResponse)
 async def register(user_data: UserCreate):
     """Register a new user"""
+    # Check if registration is disabled by admin
+    config = await database.system_config.find_one({"key": "registration_enabled"})
+    if config and config["value"] is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is currently disabled"
+        )
+    
     # Check if username exists
     existing = await database.users.find_one({"username": user_data.username})
     if existing:

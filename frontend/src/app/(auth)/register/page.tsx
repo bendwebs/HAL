@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/auth';
+import { auth as authApi } from '@/lib/api';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -13,6 +14,18 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [checkingStatus, setCheckingStatus] = useState(true);
+
+  useEffect(() => {
+    authApi.registrationStatus()
+      .then(res => {
+        if (!res.registration_enabled) {
+          router.push('/login');
+        }
+        setCheckingStatus(false);
+      })
+      .catch(() => setCheckingStatus(false));
+  }, [router]);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,6 +48,14 @@ export default function RegisterPage() {
       setError(err.message || 'Registration failed');
     }
   };
+
+  if (checkingStatus) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-bg-primary">
+        <div className="text-text-secondary">Loading...</div>
+      </main>
+    );
+  }
   
   return (
     <main className="min-h-screen flex items-center justify-center bg-bg-primary p-4">
@@ -51,7 +72,7 @@ export default function RegisterPage() {
               {error}
             </div>
           )}
-          
+
           <div>
             <label className="block text-sm text-text-secondary mb-1.5">Username</label>
             <input
@@ -79,7 +100,7 @@ export default function RegisterPage() {
               placeholder="How should we call you?"
             />
           </div>
-          
+
           <div>
             <label className="block text-sm text-text-secondary mb-1.5">Password</label>
             <input
@@ -108,7 +129,7 @@ export default function RegisterPage() {
               required
             />
           </div>
-          
+
           <button
             type="submit"
             disabled={isLoading}

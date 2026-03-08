@@ -16,7 +16,9 @@ import {
   Thermometer,
   RefreshCw,
   Mic,
-  Code
+  Code,
+  Settings,
+  UserPlus
 } from 'lucide-react';
 
 interface GpuInfo {
@@ -42,6 +44,7 @@ export default function AdminPage() {
   const { user } = useAuthStore();
   const [resources, setResources] = useState<SystemResources | null>(null);
   const [users, setUsers] = useState<any[]>([]);
+  const [systemConfig, setSystemConfig] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -63,12 +66,14 @@ export default function AdminPage() {
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const [resourcesData, usersData] = await Promise.all([
+      const [resourcesData, usersData, configData] = await Promise.all([
         admin.resources().catch(() => null),
         admin.users.list().catch(() => []),
+        admin.config.get().catch(() => ({})),
       ]);
       setResources(resourcesData);
       setUsers(usersData);
+      setSystemConfig(configData);
     } catch (err) {
       console.error('Failed to load admin data:', err);
     } finally {
@@ -353,6 +358,53 @@ export default function AdminPage() {
                   </table>
                 </div>
               )}
+            </div>
+
+            {/* System Settings */}
+            <div className="bg-surface border border-border rounded-xl p-6 mb-6">
+              <div className="flex items-center gap-3 mb-4">
+                <Settings className="w-5 h-5 text-accent" />
+                <h2 className="text-lg font-semibold text-text-primary">System Settings</h2>
+              </div>
+              
+              <div className="space-y-4">
+                {/* Registration Toggle */}
+                <div className="flex items-center justify-between p-4 bg-bg-tertiary rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <UserPlus className="w-5 h-5 text-text-secondary" />
+                    <div>
+                      <p className="text-text-primary font-medium">User Registration</p>
+                      <p className="text-sm text-text-muted">
+                        {(systemConfig.registration_enabled !== false) 
+                          ? 'New users can create accounts' 
+                          : 'Only admins can create new accounts'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const newValue = systemConfig.registration_enabled === false ? true : false;
+                      try {
+                        await admin.config.set('registration_enabled', newValue);
+                        setSystemConfig(prev => ({ ...prev, registration_enabled: newValue }));
+                      } catch (err) {
+                        console.error('Failed to update registration setting:', err);
+                      }
+                    }}
+                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${
+                      systemConfig.registration_enabled !== false
+                        ? 'bg-success' 
+                        : 'bg-bg-primary border border-border'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+                        systemConfig.registration_enabled !== false ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Quick Actions */}
