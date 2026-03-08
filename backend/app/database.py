@@ -62,8 +62,8 @@ class Database:
         
         # Messages collection
         await self.db.messages.create_indexes([
-            IndexModel([("chat_id", ASCENDING)]),
-            IndexModel([("created_at", ASCENDING)]),
+            IndexModel([("chat_id", ASCENDING), ("created_at", ASCENDING)]),
+            IndexModel([("chat_id", ASCENDING), ("role", ASCENDING), ("created_at", ASCENDING)]),
         ])
         
         # Documents collection

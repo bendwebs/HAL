@@ -81,20 +81,27 @@ async def list_chats(
     else:
         query = {"$and": [query, {"$or": [{"is_deleted": False}, {"is_deleted": {"$exists": False}}]}]}
     
-    # Get chats with message count - sort by pinned first, then by updated_at
+    # Get chats sorted by pinned first, then by updated_at
+    # Use a lightweight pipeline without $lookup (counting messages separately is cheaper)
     pipeline = [
         {"$match": query},
         {"$sort": {"is_pinned": -1, "updated_at": -1}},
+        {"$limit": 500},
         {"$lookup": {
             "from": "messages",
-            "localField": "_id",
-            "foreignField": "chat_id",
-            "as": "messages"
+            "let": {"chat_id": "$_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$chat_id", "$$chat_id"]}}},
+                {"$count": "count"}
+            ],
+            "as": "msg_count"
         }},
-        {"$addFields": {"message_count": {"$size": "$messages"}}},
-        {"$project": {"messages": 0}}
+        {"$addFields": {
+            "message_count": {"$ifNull": [{"$arrayElemAt": ["$msg_count.count", 0]}, 0]}
+        }},
+        {"$project": {"msg_count": 0}}
     ]
-    
+
     chats = await database.chats.aggregate(pipeline).to_list(500)
     
     return [

@@ -12,7 +12,10 @@ class OllamaClient:
     
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = base_url or settings.ollama_base_url
-        self.client = httpx.AsyncClient(timeout=120.0)
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout=120.0, connect=10.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
     
     async def close(self):
         await self.client.aclose()
@@ -101,6 +104,7 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": False,
+            "keep_alive": "10m",
             "options": {
                 "temperature": temperature
             }
@@ -133,6 +137,7 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": True,
+            "keep_alive": "10m",
             "options": {
                 "temperature": temperature
             }

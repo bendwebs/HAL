@@ -664,34 +664,38 @@ class AgentSystem:
         """Generate response with streaming and tool calling"""
         model = model_override or self.model
         ollama = get_ollama_client()
-        
+
         # Default tools if not specified
         if enabled_tools is None:
-            enabled_tools = ["web_search", "youtube_search", "generate_image", "document_search", 
-                           "memory_recall", "memory_store", "calculator", 
+            enabled_tools = ["web_search", "youtube_search", "generate_image", "document_search",
+                           "memory_recall", "memory_store", "calculator",
                            "get_current_date", "get_current_time"]
-        
-        # Load custom tools and add them to enabled_tools
-        custom_tool_names = await self._load_custom_tools()
+
+        # Run custom tools, system prompt, and chat history in parallel
+        import asyncio
+        custom_tools_task = asyncio.create_task(self._load_custom_tools())
+        history_task = asyncio.create_task(self._get_chat_history(chat_id, limit=10))
+
+        # Wait for custom tools first so we can include them in the prompt
+        custom_tool_names = await custom_tools_task
         if custom_tool_names:
             enabled_tools = enabled_tools + custom_tool_names
-            logger.info(f"[CUSTOM TOOLS] Added {len(custom_tool_names)} custom tools: {custom_tool_names}")
-        
-        # Get system prompt with tool availability info and memory context for voice mode
-        system_prompt = await self._get_system_prompt(
-            persona_id, user_id, enabled_tools, 
-            voice_mode=voice_mode, 
+
+        # Now start system prompt (needs enabled_tools)
+        system_prompt_task = asyncio.create_task(self._get_system_prompt(
+            persona_id, user_id, enabled_tools,
+            voice_mode=voice_mode,
             user_message=message
-        )
-        
+        ))
+
+        # Wait for both remaining tasks
+        system_prompt, history = await asyncio.gather(system_prompt_task, history_task)
+
         if voice_mode:
             system_prompt += "\n\nYou are in voice mode. Keep responses concise. No asterisks or markdown."
-        
+
         # Get Ollama tool definitions
         tools = self._get_tools_for_ollama(enabled_tools) if enabled_tools else None
-        
-        # Get chat history
-        history = await self._get_chat_history(chat_id, limit=10)
         
         # Build messages
         messages = [{"role": m["role"], "content": m["content"]} for m in history]
@@ -791,98 +795,59 @@ class AgentSystem:
             'generate', 'create', 'make', 'draw', 'image', 'picture', 'photo', 'artwork', 'illustration'
         ]) and 'generate_image' in (enabled_tools or [])
         
-        # First call - with tools to see if model wants to use any
+        # Determine if we need tool-checking first call or can stream directly
         tool_calls_to_execute = []
         first_response_content = ""
         first_response_tokens = {"prompt": 0, "completion": 0, "total": 0}
-        
-        logger.info(f"[OLLAMA CALL] model={model}, tools_count={len(tools) if tools else 0}, tools_passed={tools is not None}")
-        
-        # Non-streaming first call to check for tool usage
-        try:
-            first_response = await ollama.chat(
-                model=model,
-                messages=messages,
-                system=system_prompt,
-                tools=tools
-            )
-            
-            msg = first_response.get("message", {})
-            first_response_content = msg.get("content", "")
-            
-            # Capture token counts from first response
-            first_response_tokens = {
-                "prompt": first_response.get("prompt_eval_count", 0),
-                "completion": first_response.get("eval_count", 0),
-                "total": first_response.get("prompt_eval_count", 0) + first_response.get("eval_count", 0)
-            }
-            logger.info(f"[OLLAMA TOKENS] First call: {first_response_tokens}")
-            
-            logger.info(f"[OLLAMA RESPONSE] tool_calls={msg.get('tool_calls')}, content_preview={first_response_content[:100] if first_response_content else 'None'}...")
-            
-            if msg.get("tool_calls"):
-                tool_calls_to_execute = msg["tool_calls"]
-                logger.info(f"[TOOL CALLS] Model wants to call: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
-            
-            # If user asked for videos but model didn't call youtube_search, retry with a hint
-            elif is_video_request and not tool_calls_to_execute:
-                logger.info(f"[YOUTUBE RETRY] User asked for videos but model didn't call tool, retrying with hint")
-                
-                # Add a hint message and retry
-                retry_messages = messages.copy()
-                retry_messages.append({
-                    "role": "assistant", 
-                    "content": "I should use the youtube_search tool to find videos for you."
-                })
-                retry_messages.append({
-                    "role": "user",
-                    "content": "Yes, please use the youtube_search tool to search for videos."
-                })
-                
-                retry_response = await ollama.chat(
+        has_tools = tools is not None and len(tools) > 0
+
+        if has_tools:
+            # Non-streaming first call to check for tool usage
+            try:
+                first_response = await ollama.chat(
                     model=model,
-                    messages=retry_messages,
+                    messages=messages,
                     system=system_prompt,
                     tools=tools
                 )
-                
-                retry_msg = retry_response.get("message", {})
-                if retry_msg.get("tool_calls"):
-                    tool_calls_to_execute = retry_msg["tool_calls"]
-                    first_response_content = retry_msg.get("content", "")
-                    logger.info(f"[YOUTUBE RETRY] Success! Tool calls: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
-            
-            # If user asked for image generation but model didn't call generate_image, retry with a hint
-            elif is_image_request and not tool_calls_to_execute:
-                logger.info(f"[IMAGE RETRY] User asked for image but model didn't call tool, retrying with hint")
-                
-                # Add a hint message and retry
-                retry_messages = messages.copy()
-                retry_messages.append({
-                    "role": "assistant", 
-                    "content": "I need to use the generate_image tool to create this image for you."
-                })
-                retry_messages.append({
-                    "role": "user",
-                    "content": "Yes, please use the generate_image tool to generate the image."
-                })
-                
-                retry_response = await ollama.chat(
-                    model=model,
-                    messages=retry_messages,
-                    system=system_prompt,
-                    tools=tools
-                )
-                
-                retry_msg = retry_response.get("message", {})
-                if retry_msg.get("tool_calls"):
-                    tool_calls_to_execute = retry_msg["tool_calls"]
-                    first_response_content = retry_msg.get("content", "")
-                    logger.info(f"[IMAGE RETRY] Success! Tool calls: {[tc.get('function', {}).get('name') for tc in tool_calls_to_execute]}")
-        except Exception as e:
-            logger.error(f"First LLM call failed: {e}")
-            yield {"type": "error", "data": {"message": str(e)}}
-            return
+
+                msg = first_response.get("message", {})
+                first_response_content = msg.get("content", "")
+                first_response_tokens = {
+                    "prompt": first_response.get("prompt_eval_count", 0),
+                    "completion": first_response.get("eval_count", 0),
+                    "total": first_response.get("prompt_eval_count", 0) + first_response.get("eval_count", 0)
+                }
+
+                if msg.get("tool_calls"):
+                    tool_calls_to_execute = msg["tool_calls"]
+
+                # Retry hints for video/image if model didn't call the expected tool
+                elif is_video_request:
+                    retry_messages = messages + [
+                        {"role": "assistant", "content": "I should use the youtube_search tool to find videos for you."},
+                        {"role": "user", "content": "Yes, please use the youtube_search tool to search for videos."},
+                    ]
+                    retry_response = await ollama.chat(model=model, messages=retry_messages, system=system_prompt, tools=tools)
+                    retry_msg = retry_response.get("message", {})
+                    if retry_msg.get("tool_calls"):
+                        tool_calls_to_execute = retry_msg["tool_calls"]
+                        first_response_content = retry_msg.get("content", "")
+
+                elif is_image_request:
+                    retry_messages = messages + [
+                        {"role": "assistant", "content": "I need to use the generate_image tool to create this image for you."},
+                        {"role": "user", "content": "Yes, please use the generate_image tool to generate the image."},
+                    ]
+                    retry_response = await ollama.chat(model=model, messages=retry_messages, system=system_prompt, tools=tools)
+                    retry_msg = retry_response.get("message", {})
+                    if retry_msg.get("tool_calls"):
+                        tool_calls_to_execute = retry_msg["tool_calls"]
+                        first_response_content = retry_msg.get("content", "")
+            except Exception as e:
+                logger.error(f"First LLM call failed: {e}")
+                yield {"type": "error", "data": {"message": str(e)}}
+                return
         
         # Execute any tool calls
         tool_results = []
@@ -1012,20 +977,48 @@ class AgentSystem:
                 return
         
         else:
-            # No tool calls - stream the first response content
-            if first_response_content:
-                # Send content in chunks to simulate streaming
-                chunk_size = 10
-                for i in range(0, len(first_response_content), chunk_size):
-                    yield {"type": "content", "data": {"delta": first_response_content[i:i+chunk_size]}}
-            
-            yield {
-                "type": "done",
-                "data": {
-                    "model": model,
-                    "token_usage": first_response_tokens
+            if not has_tools:
+                # No tools at all - stream directly from Ollama (fastest path)
+                try:
+                    async for chunk in ollama.chat_stream(
+                        model=model,
+                        messages=messages,
+                        system=system_prompt
+                    ):
+                        if chunk.get("message", {}).get("content"):
+                            yield {"type": "content", "data": {"delta": chunk["message"]["content"]}}
+
+                        if chunk.get("done"):
+                            yield {
+                                "type": "done",
+                                "data": {
+                                    "model": model,
+                                    "token_usage": {
+                                        "prompt": chunk.get("prompt_eval_count", 0),
+                                        "completion": chunk.get("eval_count", 0),
+                                        "total": chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0)
+                                    }
+                                }
+                            }
+                except Exception as e:
+                    logger.error(f"Streaming LLM call failed: {e}")
+                    yield {"type": "error", "data": {"message": str(e)}}
+                    return
+            else:
+                # Tools were available but not used - emit the already-received content
+                if first_response_content:
+                    # Send in reasonable chunks for smooth UI
+                    chunk_size = 50
+                    for i in range(0, len(first_response_content), chunk_size):
+                        yield {"type": "content", "data": {"delta": first_response_content[i:i+chunk_size]}}
+
+                yield {
+                    "type": "done",
+                    "data": {
+                        "model": model,
+                        "token_usage": first_response_tokens
+                    }
                 }
-            }
 
     async def generate_response(
         self,

@@ -24,82 +24,72 @@ from app.models.user import UserRole
 
 router = APIRouter(prefix="/chats/{chat_id}/messages", tags=["Messages"])
 
+# Cache tool permissions to avoid DB queries on every message
+import time as _time
+_tool_permissions_cache: Dict[str, Any] = {}
+_tool_cache_expiry: float = 0
+_TOOL_CACHE_TTL = 30  # seconds
 
-async def get_allowed_tools(user: Dict[str, Any], requested_tools: Optional[List[str]] = None) -> Optional[List[str]]:
-    """Filter tools based on admin permission levels and inject ALWAYS_ON tools.
-    
-    This ensures that:
-    - DISABLED tools are never passed to the agent
-    - ADMIN_ONLY tools are only available to admins
-    - ALWAYS_ON tools are ALWAYS included regardless of chat settings
-    
-    Args:
-        user: Current user dict
-        requested_tools: List of tool names from chat.enabled_tools (or None for defaults)
-    
-    Returns:
-        Filtered list of tool names that the user is actually allowed to use
-    """
-    if requested_tools is None:
-        requested_tools = [
-            "web_search", "youtube_search", "generate_image", 
-            "document_search", "memory_recall", "memory_store", "calculator"
-        ]
-    
-    is_admin = user.get("role") == UserRole.ADMIN
-    
-    # Get ALL tools from DB (not just requested) so we can find ALWAYS_ON tools
+
+async def _get_tool_permissions() -> tuple:
+    """Get tool permissions with caching (refreshes every 30s)"""
+    global _tool_permissions_cache, _tool_cache_expiry
+
+    now = _time.time()
+    if now < _tool_cache_expiry and _tool_permissions_cache:
+        return _tool_permissions_cache["permissions"], _tool_permissions_cache["always_on"]
+
     all_tools = await database.tools.find().to_list(200)
-    
-    # Also check custom tools for ALWAYS_ON
-    all_custom_tools = await database.custom_tools.find({
-        "status": "released"
-    }).to_list(100)
-    
+    all_custom_tools = await database.custom_tools.find({"status": "released"}).to_list(100)
+
     tool_permissions = {}
     always_on_tools = []
-    
+
     for t in all_tools:
         perm = t.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
         tool_permissions[t["name"]] = perm
-        # Collect ALWAYS_ON tools - these get injected regardless of chat settings
         if perm == ToolPermissionLevel.ALWAYS_ON:
             always_on_tools.append(t["name"])
-    
+
     for t in all_custom_tools:
         perm = t.get("permission_level", ToolPermissionLevel.USER_TOGGLE)
         tool_permissions[t["name"]] = perm
         if perm == ToolPermissionLevel.ALWAYS_ON:
             always_on_tools.append(t["name"])
-    
+
+    _tool_permissions_cache = {"permissions": tool_permissions, "always_on": always_on_tools}
+    _tool_cache_expiry = now + _TOOL_CACHE_TTL
+
+    return tool_permissions, always_on_tools
+
+
+async def get_allowed_tools(user: Dict[str, Any], requested_tools: Optional[List[str]] = None) -> Optional[List[str]]:
+    """Filter tools based on admin permission levels and inject ALWAYS_ON tools."""
+    if requested_tools is None:
+        requested_tools = [
+            "web_search", "youtube_search", "generate_image",
+            "document_search", "memory_recall", "memory_store", "calculator"
+        ]
+
+    is_admin = user.get("role") == UserRole.ADMIN
+    tool_permissions, always_on_tools = await _get_tool_permissions()
+
     allowed = []
     for tool_name in requested_tools:
         perm = tool_permissions.get(tool_name, ToolPermissionLevel.USER_TOGGLE)
-        
-        # DISABLED tools are never available to anyone
         if perm == ToolPermissionLevel.DISABLED:
-            logger.info(f"[TOOL FILTER] Tool '{tool_name}' is DISABLED - excluding from chat (applies to all users)")
             continue
-        
-        # ADMIN_ONLY tools only available to admins
         if perm == ToolPermissionLevel.ADMIN_ONLY and not is_admin:
-            logger.info(f"[TOOL FILTER] Tool '{tool_name}' is ADMIN_ONLY - excluding for non-admin user")
             continue
-        
-        # All other permission levels: USER_TOGGLE, OPT_IN, ALWAYS_ON are allowed
         allowed.append(tool_name)
-    
-    # Inject ALWAYS_ON tools that aren't already in the list
+
     for tool_name in always_on_tools:
         if tool_name not in allowed:
-            # ADMIN_ONLY check still applies even for ALWAYS_ON
             perm = tool_permissions.get(tool_name)
             if perm == ToolPermissionLevel.ADMIN_ONLY and not is_admin:
                 continue
             allowed.append(tool_name)
-            logger.info(f"[TOOL FILTER] Injecting ALWAYS_ON tool '{tool_name}' (not in chat's enabled_tools)")
-    
-    logger.info(f"[TOOL FILTER] Requested: {requested_tools}, Always-on: {always_on_tools}, Final allowed: {allowed}")
+
     return allowed if allowed else None
 
 
@@ -216,12 +206,14 @@ async def send_message(
         "created_at": now
     }
     
-    await database.messages.insert_one(user_msg_doc)
-    
-    # Update chat timestamp
-    await database.chats.update_one(
-        {"_id": ObjectId(chat_id)},
-        {"$set": {"updated_at": now}}
+    # Save user message and update chat timestamp in parallel
+    import asyncio
+    await asyncio.gather(
+        database.messages.insert_one(user_msg_doc),
+        database.chats.update_one(
+            {"_id": ObjectId(chat_id)},
+            {"$set": {"updated_at": now}}
+        )
     )
     
     agent_system = get_agent_system()
@@ -282,104 +274,76 @@ async def send_message(
                 
                 # Send final message with ID
                 yield f"data: {json.dumps({'type': 'saved', 'data': {'message_id': str(result.inserted_id)}})}\n\n"
-                
-                # Auto-generate title if this is the first exchange
-                # Applies to "New Chat" and "Voice Conversation" titles
+
+                # Run title generation and memory extraction as background tasks
+                # so they don't block the SSE stream from closing
+                import asyncio
+
                 current_title = chat.get("title", "").strip().lower()
                 needs_title = current_title in ["new chat", "voice conversation", ""]
-                
+
                 if needs_title:
-                    message_count = await database.messages.count_documents({"chat_id": ObjectId(chat_id)})
-                    if message_count >= 2:  # At least user message + assistant response
+                    async def generate_title():
                         try:
+                            msg_count = await database.messages.count_documents({"chat_id": ObjectId(chat_id)})
+                            if msg_count < 2:
+                                return
                             from app.services.ollama_client import get_ollama_client
                             ollama = get_ollama_client()
-                            
-                            # Get first user message for title generation
                             first_user_msg = await database.messages.find_one(
                                 {"chat_id": ObjectId(chat_id), "role": "user"},
                                 sort=[("created_at", 1)]
                             )
-                            
-                            if first_user_msg:
-                                title_prompt = f"Generate a very short title (3-6 words max) for a chat that starts with this message: \"{first_user_msg['content'][:200]}\"\n\nRespond with ONLY the title, no quotes, no explanation."
-                                
-                                title_response = await ollama.chat(
-                                    model=chat.get("model_override") or "qwen2.5:7b",
-                                    messages=[{"role": "user", "content": title_prompt}]
+                            if not first_user_msg:
+                                return
+                            title_prompt = f"Generate a very short title (3-6 words max) for a chat that starts with this message: \"{first_user_msg['content'][:200]}\"\n\nRespond with ONLY the title, no quotes, no explanation."
+                            title_response = await ollama.chat(
+                                model=chat.get("model_override") or "qwen2.5:7b",
+                                messages=[{"role": "user", "content": title_prompt}]
+                            )
+                            new_title = title_response.get("message", {}).get("content", "").strip().strip('"\'').strip()
+                            if new_title and len(new_title) <= 50:
+                                await database.chats.update_one(
+                                    {"_id": ObjectId(chat_id)},
+                                    {"$set": {"title": new_title}}
                                 )
-                                
-                                new_title = title_response.get("message", {}).get("content", "").strip()
-                                # Clean up the title
-                                new_title = new_title.strip('"\'').strip()
-                                if new_title and len(new_title) <= 50:
-                                    await database.chats.update_one(
-                                        {"_id": ObjectId(chat_id)},
-                                        {"$set": {"title": new_title}}
-                                    )
-                                    yield f"data: {json.dumps({'type': 'title_updated', 'data': {'title': new_title}})}\n\n"
                         except Exception as e:
-                            print(f"Failed to auto-generate title: {e}")
-                
-                # Extract and save memories in background (don't block the response)
-                import asyncio
-                
+                            logger.warning(f"Background title generation failed: {e}")
+
+                    asyncio.create_task(generate_title())
+
+                # Note: title_updated SSE event is no longer sent inline since title
+                # generation is now background. The frontend refreshes the chat list
+                # via chatListVersion which picks up the new title.
+
                 async def extract_and_save_memories():
-                    """Background task to extract and save memories"""
                     try:
-                        print(f"[DEBUG] Starting background memory extraction for chat {chat_id}")
                         recent_msgs = await database.messages.find(
                             {"chat_id": ObjectId(chat_id)}
                         ).sort("created_at", -1).limit(6).to_list(6)
-                        
+
                         if len(recent_msgs) >= 2:
                             recent_msgs.reverse()
                             from app.services.memory_system import get_memory_system
                             mem_system = get_memory_system()
-                            
+
                             if mem_system.is_available:
-                                formatted = [
-                                    {"role": m["role"], "content": m["content"]} 
-                                    for m in recent_msgs
-                                ]
-                                
-                                result = await mem_system.extract_memories(
+                                formatted = [{"role": m["role"], "content": m["content"]} for m in recent_msgs]
+                                mem_result = await mem_system.extract_memories(
                                     user_id=current_user["_id"],
                                     messages=formatted,
                                     metadata={"chat_id": chat_id}
                                 )
-                                
-                                if result:
-                                    pending = result.get("pending", [])
-                                    for memory_content in pending:
-                                        add_result = await mem_system.add_memory(
+                                if mem_result:
+                                    for memory_content in mem_result.get("pending", []):
+                                        await mem_system.add_memory(
                                             user_id=current_user["_id"],
                                             content=memory_content,
                                             metadata={"chat_id": chat_id, "auto_extracted": True}
                                         )
-                                        if add_result and not add_result.get("skipped"):
-                                            print(f"[DEBUG] Background saved memory: {memory_content[:60]}...")
-                                        elif add_result and add_result.get("skipped"):
-                                            print(f"[DEBUG] Skipped duplicate memory: {memory_content[:60]}...")
-                                
-                                # Periodically consolidate memories (every ~20 messages)
-                                total_msgs = await database.messages.count_documents(
-                                    {"chat_id": {"$in": await database.chats.distinct("_id", {"user_id": ObjectId(current_user["_id"])})}}
-                                )
-                                if total_msgs > 0 and total_msgs % 20 == 0:
-                                    print(f"[DEBUG] Triggering periodic memory consolidation (message #{total_msgs})")
-                                    consolidate_result = await mem_system.auto_consolidate(
-                                        user_id=current_user["_id"],
-                                        threshold=0.80
-                                    )
-                                    print(f"[DEBUG] Consolidation result: {consolidate_result}")
-                                    
                     except Exception as e:
-                        print(f"[DEBUG] Background memory extraction error: {e}")
-                        import traceback
-                        traceback.print_exc()
-                
-                # Start background task (non-blocking)
+                        logger.warning(f"Background memory extraction error: {e}")
+
                 asyncio.create_task(extract_and_save_memories())
                 
             except Exception as e:
