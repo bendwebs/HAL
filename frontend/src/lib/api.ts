@@ -213,8 +213,8 @@ export const chats = {
 
 // Messages API
 export const messages = {
-  list: (chatId: string, limit = 50) =>
-    request<any[]>(`/api/chats/${chatId}/messages?limit=${limit}`),
+  list: (chatId: string, limit = 50, before?: string) =>
+    request<any[]>(`/api/chats/${chatId}/messages?limit=${limit}${before ? `&before=${before}` : ''}`),
     
   send: (chatId: string, content: string, documentIds: string[] = []) =>
     request<any>(`/api/chats/${chatId}/messages?stream=false`, {

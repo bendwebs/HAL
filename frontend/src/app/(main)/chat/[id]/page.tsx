@@ -10,7 +10,7 @@ import ChatMessage from '@/components/chat/ChatMessage';
 import ChatInput from '@/components/chat/ChatInput';
 import ChatHeader from '@/components/chat/ChatHeader';
 import VideoPlayer, { VideoPlayerVideo } from '@/components/chat/VideoPlayer';
-import { Loader2, Brain, Sparkles, X, Check, Trash2 } from 'lucide-react';
+import { Loader2, Brain, Sparkles, X, Check, Trash2, ChevronUp } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 // YouTube video interface for tracking search results
@@ -37,6 +37,8 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<Partial<Message> | null>(null);
   const [memoriesUsed, setMemoriesUsed] = useState<any[]>([]);
   const [pendingMemories, setPendingMemories] = useState<string[]>([]);
@@ -81,20 +83,42 @@ export default function ChatPage() {
     }
   }, [messages]);
 
+  const MESSAGE_PAGE_SIZE = 50;
+
   const loadChat = async () => {
     try {
       setIsLoading(true);
       const [chatData, messagesData] = await Promise.all([
         chatsApi.get(chatId),
-        messagesApi.list(chatId),
+        messagesApi.list(chatId, MESSAGE_PAGE_SIZE),
       ]);
       setChat(chatData);
       setMessages(messagesData);
+      setHasOlderMessages(messagesData.length >= MESSAGE_PAGE_SIZE);
     } catch (err) {
       console.error('Failed to load chat:', err);
       router.push('/chat');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadOlderMessages = async () => {
+    if (isLoadingOlder || !hasOlderMessages || messages.length === 0) return;
+    setIsLoadingOlder(true);
+    try {
+      const oldestId = messages[0].id;
+      const olderMessages = await messagesApi.list(chatId, MESSAGE_PAGE_SIZE, oldestId);
+      if (olderMessages.length < MESSAGE_PAGE_SIZE) {
+        setHasOlderMessages(false);
+      }
+      if (olderMessages.length > 0) {
+        setMessages(prev => [...olderMessages, ...prev]);
+      }
+    } catch (err) {
+      console.error('Failed to load older messages:', err);
+    } finally {
+      setIsLoadingOlder(false);
     }
   };
 
@@ -421,6 +445,24 @@ export default function ChatPage() {
       
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
+          {/* Load older messages */}
+          {hasOlderMessages && messages.length > 0 && (
+            <div className="text-center">
+              <button
+                onClick={loadOlderMessages}
+                disabled={isLoadingOlder}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:text-text-primary bg-surface hover:bg-surface-hover border border-border rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isLoadingOlder ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ChevronUp className="w-4 h-4" />
+                )}
+                {isLoadingOlder ? 'Loading...' : 'Load older messages'}
+              </button>
+            </div>
+          )}
+
           {messages.length === 0 && !streamingMessage && (
             <div className="text-center py-16 animate-fade-in">
               <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
