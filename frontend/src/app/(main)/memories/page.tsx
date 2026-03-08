@@ -482,7 +482,7 @@ export default function MemoriesPage() {
             </div>
 
             {isLoading ? (
-              <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 bg-surface animate-pulse rounded-xl" />)}</div>
+              <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="p-4 border border-border rounded-xl"><div className="skeleton h-4 w-3/4 mb-2" /><div className="skeleton h-3 w-1/2" /></div>)}</div>
             ) : displayMemories.length === 0 ? (
               <div className="text-center py-12">
                 <Brain className="w-12 h-12 text-text-muted mx-auto mb-4" />
@@ -597,7 +597,7 @@ export default function MemoriesPage() {
             </div>
 
             {isLoadingChats ? (
-              <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-16 bg-surface animate-pulse rounded-lg" />)}</div>
+              <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="flex items-center gap-3 p-3 border border-border rounded-lg"><div className="skeleton w-8 h-8 rounded-full flex-shrink-0" /><div className="flex-1"><div className="skeleton h-4 w-2/3 mb-1.5" /><div className="skeleton h-3 w-1/3" /></div></div>)}</div>
             ) : filteredChats.length === 0 ? (
               <div className="text-center py-12">
                 <MessageSquare className="w-12 h-12 text-text-muted mx-auto mb-4" />

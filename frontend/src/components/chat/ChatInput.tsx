@@ -118,8 +118,12 @@ export default function ChatInput({ onSend, disabled, canWrite = true, chat, onC
         {chat && onChatUpdate && (
           <div className="px-4 pt-3 pb-1 flex items-center justify-between border-b border-border/50">
             <ToolToggle chat={chat} onUpdate={onChatUpdate} />
-            <p className="text-xs text-text-muted">
-              Press Enter to send, Shift+Enter for new line
+            <p className="text-xs text-text-muted hidden sm:block">
+              <kbd className="px-1 py-0.5 bg-surface rounded border border-border text-[10px]">Enter</kbd> send
+              <span className="mx-1.5 text-border">|</span>
+              <kbd className="px-1 py-0.5 bg-surface rounded border border-border text-[10px]">Shift+Enter</kbd> newline
+              <span className="mx-1.5 text-border">|</span>
+              <kbd className="px-1 py-0.5 bg-surface rounded border border-border text-[10px]">/</kbd> focus
             </p>
           </div>
         )}

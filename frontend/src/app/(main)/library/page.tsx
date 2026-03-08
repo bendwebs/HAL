@@ -359,7 +359,11 @@ export default function LibraryPage() {
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="h-48 bg-surface animate-pulse rounded-xl" />
+              <div key={i} className="p-4 border border-border rounded-xl">
+                <div className="skeleton w-full h-24 rounded-lg mb-3" />
+                <div className="skeleton h-4 w-3/4 mb-2" />
+                <div className="skeleton h-3 w-1/2" />
+              </div>
             ))}
           </div>
         ) : docs.length === 0 ? (

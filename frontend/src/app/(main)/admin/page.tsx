@@ -148,7 +148,11 @@ export default function AdminPage() {
         {isLoading ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="h-32 bg-surface animate-pulse rounded-xl" />
+              <div key={i} className="p-4 border border-border rounded-xl">
+                <div className="skeleton h-5 w-24 mb-3" />
+                <div className="skeleton h-8 w-16 mb-2" />
+                <div className="skeleton h-3 w-32" />
+              </div>
             ))}
           </div>
         ) : (

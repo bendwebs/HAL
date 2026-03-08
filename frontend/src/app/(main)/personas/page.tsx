@@ -424,7 +424,16 @@ export default function PersonasPage() {
         {/* Personas Grid */}
         {isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {[1, 2, 3].map(i => <div key={i} className="h-48 bg-surface animate-pulse rounded-xl" />)}
+            {[1, 2, 3].map(i => (
+              <div key={i} className="p-4 border border-border rounded-xl">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="skeleton w-10 h-10 rounded-full" />
+                  <div className="skeleton h-5 w-32" />
+                </div>
+                <div className="skeleton h-4 w-full mb-2" />
+                <div className="skeleton h-4 w-2/3" />
+              </div>
+            ))}
           </div>
         ) : personaList.length === 0 ? (
           <div className="text-center py-12">
