@@ -21,22 +21,28 @@ export default function MobileNav() {
   ];
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-black/60 backdrop-blur-sm border-t border-white/10 flex items-center justify-around px-2 z-30">
-      {items.map(item => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className={cn(
-            "flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg transition-colors min-w-[56px]",
-            pathname.startsWith(item.href)
-              ? "text-accent"
-              : "text-text-muted"
-          )}
-        >
-          <item.icon className="w-5 h-5" />
-          <span className="text-[10px]">{item.label}</span>
-        </Link>
-      ))}
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-md border-t border-white/10 flex items-center justify-around px-2 z-30 pb-[env(safe-area-inset-bottom)]">
+      {items.map(item => {
+        const isActive = pathname.startsWith(item.href);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={cn(
+              "flex flex-col items-center justify-center gap-0.5 px-3 py-2.5 rounded-lg transition-all min-w-[56px] relative",
+              isActive
+                ? "text-accent"
+                : "text-text-muted active:scale-95"
+            )}
+          >
+            {isActive && (
+              <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-5 h-0.5 bg-accent rounded-full" />
+            )}
+            <item.icon className={cn("w-5 h-5", isActive && "drop-shadow-[0_0_6px_rgba(20,184,166,0.5)]")} />
+            <span className="text-[10px] font-medium">{item.label}</span>
+          </Link>
+        );
+      })}
     </nav>
   );
 }
