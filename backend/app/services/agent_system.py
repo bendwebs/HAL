@@ -1054,11 +1054,11 @@ class AgentSystem:
         return result
 
     async def _get_system_prompt(self, persona_id: Optional[str], user_id: str, enabled_tools: Optional[List[str]] = None, voice_mode: bool = False, user_message: str = "") -> str:
-        """Get system prompt from persona or default, with optional memory injection for voice mode"""
-        
-        # For voice mode, automatically fetch relevant memories to inject
+        """Get system prompt from persona or default, with memory injection for personalization"""
+
+        # Always fetch relevant memories for personalization (not just voice mode)
         memory_context = ""
-        if voice_mode and user_message:
+        if user_message:
             memory_context = await self._get_relevant_memories_for_context(user_id, user_message)
         
         persona = None
@@ -1188,50 +1188,50 @@ The user trusts you - don't betray that trust by inventing false information.
         return prompt
     
     async def _get_relevant_memories_for_context(self, user_id: str, message: str) -> str:
-        """Fetch relevant memories to inject into context for personalized responses.
-        
-        This is especially useful in voice mode where we want the AI to naturally
-        use what it knows about the user without requiring explicit tool calls.
-        """
+        """Fetch relevant memories to inject into context for personalized responses."""
         try:
             memory_system = get_memory_system()
             if not memory_system.is_available:
                 return ""
-            
-            # Get core user memories (name, preferences, key facts)
-            # These should always be included for personalization
-            all_memories = await memory_system.get_all_memories(user_id, limit=20)
-            
-            # Also search for memories relevant to the current message
-            relevant_memories = await memory_system.search_memories(user_id, message, limit=5)
-            
-            # Combine and deduplicate
+
+            import asyncio
+            # Fetch general and relevant memories in parallel
+            all_task = memory_system.get_all_memories(user_id, limit=30)
+            relevant_task = memory_system.search_memories(user_id, message, limit=8)
+            all_memories, relevant_memories = await asyncio.gather(all_task, relevant_task)
+
             memory_ids_seen = set()
             combined_memories = []
-            
-            # Add relevant memories first (most important)
+
+            # 1. Add semantically relevant memories first (highest priority)
             for mem in relevant_memories:
-                if mem["id"] not in memory_ids_seen and mem.get("score", 0) > 0.5:
+                if mem["id"] not in memory_ids_seen and mem.get("score", 0) > 0.4:
                     memory_ids_seen.add(mem["id"])
                     combined_memories.append(mem["content"])
-            
-            # Add core memories (name, location, job, etc.) - filter for important ones
-            important_keywords = ["name is", "lives in", "works", "job", "profession", "likes", "prefers", "favorite", "always", "never"]
+
+            # 2. Add core identity memories (name, location, job, preferences)
+            identity_keywords = [
+                "name is", "called", "lives in", "located in", "works at", "works as",
+                "job", "profession", "engineer", "developer",
+                "likes", "prefers", "favorite", "always", "never",
+                "born", "age", "family", "wife", "husband", "partner",
+                "drives", "owns", "uses", "runs"
+            ]
             for mem in all_memories:
                 if mem["id"] not in memory_ids_seen:
                     content_lower = mem["content"].lower()
-                    if any(kw in content_lower for kw in important_keywords):
+                    if any(kw in content_lower for kw in identity_keywords):
                         memory_ids_seen.add(mem["id"])
                         combined_memories.append(mem["content"])
-            
+
             if not combined_memories:
                 return ""
-            
-            # Limit to avoid context overflow
-            combined_memories = combined_memories[:10]
-            
+
+            # Limit to avoid context overflow (15 memories max)
+            combined_memories = combined_memories[:15]
+
             return "\n".join([f"- {m}" for m in combined_memories])
-            
+
         except Exception as e:
             logger.error(f"Error fetching memories for context: {e}")
             return ""

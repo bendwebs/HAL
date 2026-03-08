@@ -9,6 +9,9 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 
@@ -66,26 +69,24 @@ class MemorySystem:
         try:
             from mem0 import Memory
             config = _get_mem0_config()
-            print(f"[DEBUG] Mem0 config: {config}")
             self._memory = Memory.from_config(config)
-            
-            # Debug: Check actual embedder configuration
-            print(f"[DEBUG] Embedder model: {self._memory.embedding_model.config.model}")
-            print(f"[DEBUG] Embedder dims: {self._memory.embedding_model.config.embedding_dims}")
-            
-            # Test embedding
+
+            # Verify embedding works
             test_embed = self._memory.embedding_model.embed("test")
-            print(f"[DEBUG] Test embedding dimensions: {len(test_embed)}")
-            
-            print(f"[OK] Mem0 initialized with Ollama ({settings.default_chat_model}) + ChromaDB vector store")
+
+            import logging
+            logging.getLogger(__name__).info(
+                f"Mem0 initialized: {settings.default_chat_model} + ChromaDB, "
+                f"embed_dims={len(test_embed)}"
+            )
         except ImportError as e:
             self._init_error = f"mem0ai not installed: {e}"
-            print(f"[WARN] Mem0 not available: {self._init_error}")
+            import logging
+            logging.getLogger(__name__).warning(f"Mem0 not available: {self._init_error}")
         except Exception as e:
             self._init_error = str(e)
-            print(f"[WARN] Mem0 initialization failed: {self._init_error}")
-            import traceback
-            traceback.print_exc()
+            import logging
+            logging.getLogger(__name__).warning(f"Mem0 initialization failed: {self._init_error}")
     
     @property
     def is_available(self) -> bool:
@@ -111,13 +112,13 @@ class MemorySystem:
                 for mem in existing:
                     # If very similar memory exists (score > 0.85), skip
                     if mem.get("score", 0) > 0.85:
-                        print(f"[DEBUG] Skipping duplicate memory: '{content[:50]}...' (similar to '{mem['content'][:50]}...')")
+                        logging.getLogger(__name__).debug(f"Skipping duplicate memory (score={mem.get('score', 0):.2f})")
                         return {"results": [], "skipped": True, "reason": "duplicate"}
             
             result = self._memory.add(content, user_id=user_id, metadata=metadata or {})
             return result
         except Exception as e:
-            print(f"Error adding memory: {e}")
+            logger.error(f"Error adding memory: {e}")
             return None
 
     async def add_conversation(self, user_id: str, messages: List[Dict[str, str]], metadata: Optional[Dict[str, Any]] = None):
@@ -129,7 +130,7 @@ class MemorySystem:
             result = self._memory.add(messages, user_id=user_id, metadata=metadata or {})
             return result
         except Exception as e:
-            print(f"Error adding conversation memories: {e}")
+            logger.error(f"Error adding conversation memories: {e}")
             return None
     
     async def search_memories(self, user_id: str, query: str, limit: int = 5) -> List[Dict[str, Any]]:
@@ -153,7 +154,7 @@ class MemorySystem:
             
             return memories
         except Exception as e:
-            print(f"Error searching memories: {e}")
+            logger.error(f"Error searching memories: {e}")
             return []
 
     async def get_all_memories(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
@@ -177,7 +178,7 @@ class MemorySystem:
             
             return memories
         except Exception as e:
-            print(f"Error getting memories: {e}")
+            logger.error(f"Error getting memories: {e}")
             return []
     
     async def get_memory(self, memory_id: str):
@@ -198,7 +199,7 @@ class MemorySystem:
                 }
             return None
         except Exception as e:
-            print(f"Error getting memory: {e}")
+            logger.error(f"Error getting memory: {e}")
             return None
 
     async def update_memory(self, memory_id: str, content: str):
@@ -210,7 +211,7 @@ class MemorySystem:
             result = self._memory.update(memory_id, content)
             return result
         except Exception as e:
-            print(f"Error updating memory: {e}")
+            logger.error(f"Error updating memory: {e}")
             return None
     
     async def delete_memory(self, memory_id: str) -> bool:
@@ -222,7 +223,7 @@ class MemorySystem:
             self._memory.delete(memory_id)
             return True
         except Exception as e:
-            print(f"Error deleting memory: {e}")
+            logger.error(f"Error deleting memory: {e}")
             return False
     
     async def delete_all_memories(self, user_id: str) -> bool:
@@ -234,7 +235,7 @@ class MemorySystem:
             self._memory.delete_all(user_id=user_id)
             return True
         except Exception as e:
-            print(f"Error deleting all memories: {e}")
+            logger.error(f"Error deleting all memories: {e}")
             return False
     
     def get_history(self, memory_id: str) -> list:
@@ -245,7 +246,7 @@ class MemorySystem:
         try:
             return self._memory.history(memory_id)
         except Exception as e:
-            print(f"Error getting memory history: {e}")
+            logger.error(f"Error getting memory history: {e}")
             return []
 
     async def find_duplicates(self, user_id: str, threshold: float = 0.85) -> Dict[str, Any]:
@@ -326,7 +327,7 @@ class MemorySystem:
             }
             
         except Exception as e:
-            print(f"Error finding duplicates: {e}")
+            logger.error(f"Error finding duplicates: {e}")
             import traceback
             traceback.print_exc()
             return {"groups": [], "total_duplicates": 0, "error": str(e)}
@@ -475,7 +476,7 @@ class MemorySystem:
             }
             
         except Exception as e:
-            print(f"Error analyzing memories: {e}")
+            logger.error(f"Error analyzing memories: {e}")
             import traceback
             traceback.print_exc()
             return {"groups": [], "low_value": [], "related": [], "consolidation_suggestions": [], "error": str(e)}
@@ -564,7 +565,7 @@ If no consolidations make sense, return: {{"consolidations": []}}"""
             return []
             
         except Exception as e:
-            print(f"Error suggesting thematic consolidations: {e}")
+            logger.error(f"Error suggesting thematic consolidations: {e}")
             return []
 
     async def _find_low_value_memories(self, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -661,7 +662,7 @@ If no memories are truly low value, return: {{"low_value": []}}"""
             return []
             
         except Exception as e:
-            print(f"Error finding low-value memories: {e}")
+            logger.error(f"Error finding low-value memories: {e}")
             return []
 
     async def _suggest_smart_merge(self, memories: List[Dict[str, Any]]) -> str:
@@ -697,7 +698,7 @@ Return ONLY the merged memory text, nothing else."""
             return max(contents, key=len)
             
         except Exception as e:
-            print(f"Error suggesting smart merge: {e}")
+            logger.error(f"Error suggesting smart merge: {e}")
             return max([m["content"] for m in memories], key=len)
 
     async def extract_memories(self, user_id: str, messages: List[Dict[str, str]], metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -770,7 +771,7 @@ If nothing new and meaningful to remember, return: {{"facts": []}}"""
             )
             
             response_text = response.get("message", {}).get("content", "").strip()
-            print(f"[DEBUG] Memory extraction raw response: {response_text[:500]}")
+            logger = logging.getLogger(__name__)
             
             # Parse JSON response
             import json
@@ -785,25 +786,25 @@ If nothing new and meaningful to remember, return: {{"facts": []}}"""
                 try:
                     data = json.loads(json_match.group())
                     facts = data.get("facts", [])
-                    print(f"[DEBUG] Extracted facts: {facts}")
+                    logger.debug(f"Extracted {len(facts)} facts")
                     
                     # Filter out empty or very short facts
                     valid_facts = [f.strip() for f in facts if f and len(f.strip()) > 15]
-                    print(f"[DEBUG] Valid facts after filtering: {valid_facts}")
+                    logger.debug(f"Valid facts after filtering: {len(valid_facts)}")
                     
                     return {
                         "pending": valid_facts,
                         "chat_id": metadata.get("chat_id") if metadata else None
                     }
                 except json.JSONDecodeError as je:
-                    print(f"[DEBUG] JSON decode error: {je}")
+                    logger.warning(f"Memory extraction JSON decode error: {je}")
             else:
-                print(f"[DEBUG] No JSON match found in response")
+                logger.warning("No JSON match found in memory extraction response")
             
             return {"pending": []}
             
         except Exception as e:
-            print(f"Error extracting memories: {e}")
+            logger.error(f"Error extracting memories: {e}")
             import traceback
             traceback.print_exc()
             return {"pending": []}
@@ -909,7 +910,7 @@ If nothing new and meaningful to remember, return: {{"facts": []}}"""
                 if not any(word in content_lower for word in ["name", "lives", "works", "likes", "has", "drives"]):
                     if await self.delete_memory(lv["id"]):
                         low_value_deleted += 1
-                        print(f"[DEBUG] Deleted low-value memory: {lv['content'][:50]}... Reason: {lv.get('reason', 'N/A')}")
+                        logging.getLogger(__name__).debug(f"Deleted low-value memory: {lv.get('reason', 'N/A')}")
             
             return {
                 "success": True,
@@ -922,7 +923,7 @@ If nothing new and meaningful to remember, return: {{"facts": []}}"""
             }
             
         except Exception as e:
-            print(f"Error in auto_consolidate: {e}")
+            logger.error(f"Error in auto_consolidate: {e}")
             import traceback
             traceback.print_exc()
             return {"success": False, "error": str(e)}
