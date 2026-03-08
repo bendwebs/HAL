@@ -9,7 +9,8 @@ import { chats as chatsApi } from '@/lib/api';
 import Sidebar from '@/components/shared/Sidebar';
 import MobileNav from '@/components/shared/MobileNav';
 import AlertsDropdown from '@/components/shared/AlertsDropdown';
-import { Menu, Bell, Settings, LogOut } from 'lucide-react';
+import CommandPalette from '@/components/shared/CommandPalette';
+import { Menu, Bell, Settings, LogOut, Search } from 'lucide-react';
 
 export default function MainLayout({
   children,
@@ -118,6 +119,21 @@ export default function MainLayout({
             <Menu className="w-5 h-5 text-text-secondary" />
           </button>
 
+          {/* Command palette trigger */}
+          <button
+            onClick={() => {
+              // Dispatch Ctrl+K to open command palette
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
+            }}
+            className="hidden md:flex items-center gap-2 px-3 py-1.5 text-sm text-text-muted hover:text-text-secondary bg-surface hover:bg-surface-hover border border-border rounded-lg transition-colors"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span>Search...</span>
+            <kbd className="ml-2 px-1.5 py-0.5 text-xs bg-bg-tertiary rounded border border-border">
+              Ctrl+K
+            </kbd>
+          </button>
+
           <div className="flex-1" />
 
           {/* Alerts */}
@@ -196,6 +212,9 @@ export default function MainLayout({
         {/* Mobile Bottom Nav */}
         <MobileNav />
       </div>
+
+      {/* Command Palette */}
+      <CommandPalette />
     </div>
   );
 }
