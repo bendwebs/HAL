@@ -1,5 +1,5 @@
-// Custom HTTPS server for HAL frontend (for mobile voice access)
-// Also proxies /api/* to the backend for tunnel support (hal.bendwebs.com)
+// HAL 2.0 - Custom server with API proxying and LAN access
+// Serves both HTTP and HTTPS, proxies /api/* to backend
 const { createServer: createHttpsServer } = require('https');
 const { createServer: createHttpServer } = require('http');
 const https = require('https');
@@ -8,6 +8,7 @@ const { parse } = require('url');
 const next = require('next');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -15,7 +16,7 @@ const httpsPort = 3443;
 const httpPort = 3000;
 
 // Backend URL for API proxying
-const BACKEND_URL = process.env.BACKEND_URL || 'https://localhost:8443';
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
 const backendParsed = new URL(BACKEND_URL);
 const backendIsHttps = backendParsed.protocol === 'https:';
 
@@ -33,8 +34,22 @@ if (hasCerts) {
     cert: fs.readFileSync(certFile),
   };
 } else {
-  console.warn('SSL certificates not found - HTTPS server will not start');
-  console.warn('HTTP server will still run on port', httpPort);
+  console.warn('[HAL] SSL certificates not found - HTTPS server will not start');
+}
+
+/**
+ * Auto-detect LAN IP address
+ */
+function getLanIp() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1';
 }
 
 /**
@@ -52,12 +67,13 @@ function proxyToBackend(req, res) {
       ...req.headers,
       host: backendParsed.host,
     },
-    // Allow self-signed certs on backend
     rejectUnauthorized: false,
   };
 
   const proxyReq = reqModule.request(options, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    // Copy headers, ensuring SSE streams work
+    const headers = { ...proxyRes.headers };
+    res.writeHead(proxyRes.statusCode, headers);
     proxyRes.pipe(res, { end: true });
   });
 
@@ -101,21 +117,21 @@ const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
   const handler = createRequestHandler(handle);
+  const lanIp = getLanIp();
 
-  // Always start HTTP server (for tunnel access)
+  // Always start HTTP server (for LAN desktop access + tunnel)
   createHttpServer(handler).listen(httpPort, hostname, () => {
-    console.log(`> HTTP  Server ready on http://${hostname}:${httpPort}`);
-    console.log(`> Tunnel access: http://localhost:${httpPort} -> hal.bendwebs.com`);
+    console.log(`[HAL] HTTP  ready: http://localhost:${httpPort}`);
+    console.log(`[HAL] LAN access:  http://${lanIp}:${httpPort}`);
   });
 
-  // Start HTTPS server if certs are available
+  // Start HTTPS server if certs are available (needed for mobile voice)
   if (httpsOptions) {
     createHttpsServer(httpsOptions, handler).listen(httpsPort, hostname, () => {
-      console.log(`> HTTPS Server ready on https://${hostname}:${httpsPort}`);
-      console.log(`> Mobile access: https://192.168.1.29:${httpsPort}`);
-      console.log('> Note: You may need to accept the self-signed certificate warning');
+      console.log(`[HAL] HTTPS ready: https://localhost:${httpsPort}`);
+      console.log(`[HAL] Mobile:      https://${lanIp}:${httpsPort} (accept self-signed cert)`);
     });
   }
 
-  console.log(`> API proxy: /api/* -> ${BACKEND_URL}`);
+  console.log(`[HAL] API proxy:   /api/* -> ${BACKEND_URL}`);
 });

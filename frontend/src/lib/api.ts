@@ -7,17 +7,17 @@ function getApiUrl(): string {
   if (typeof window === 'undefined') {
     return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   }
-  
-  // Client-side: if accessed via tunnel domain, use same origin for API
-  // This assumes the tunnel routes /api/* to the backend
+
   const hostname = window.location.hostname;
-  
-  if (hostname === 'hal.bendwebs.com') {
-    // When accessed via tunnel, API calls go through the same tunnel origin
-    return window.location.origin;
+
+  // When accessed via localhost, connect directly to backend on port 8000
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   }
-  
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+  // Any other access (LAN IP, tunnel domain, etc.) uses same-origin
+  // The frontend server proxies /api/* to the backend automatically
+  return window.location.origin;
 }
 
 export const API_URL = getApiUrl();
@@ -504,7 +504,13 @@ export const admin = {
   },
   
   resources: () => request<any>('/api/admin/resources'),
-  
+
+  networkInfo: () => request<{
+    lan_ip: string;
+    urls: { frontend_http: string; frontend_https: string; backend_http: string; backend_https: string };
+    notes: { desktop: string; mobile_voice: string };
+  }>('/api/network-info'),
+
   config: {
     get: () => request<Record<string, any>>('/api/admin/config'),
     set: (key: string, value: any) =>

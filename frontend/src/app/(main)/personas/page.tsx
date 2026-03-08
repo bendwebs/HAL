@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { personas, models as modelsApi, voiceSettings } from '@/lib/api';
+import { personas, models as modelsApi, voiceSettings, API_URL } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { 
   Users, Plus, Trash2, Edit2, Bot, Globe, Lock, Sparkles, 
@@ -115,8 +115,6 @@ const GROUP_INFO: Record<ModelGroup, { label: string; hint: string }> = {
   general: { label: 'General Purpose', hint: 'Fast, lightweight models' },
   embedding: { label: 'Embeddings (Not for Chat)', hint: 'Used for RAG/search, not conversations' },
 };
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function PersonasPage() {
   const { user } = useAuthStore();

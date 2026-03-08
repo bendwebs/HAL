@@ -1,26 +1,35 @@
 """
-HTTPS Server wrapper for HAL Backend
-Use this for mobile voice access which requires secure context
+HAL 2.0 - HTTPS Backend Server
+Used for mobile voice access which requires secure context
 """
 import uvicorn
-import ssl
 import os
+import socket
+
+def get_lan_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 if __name__ == "__main__":
-    # Certificate paths
     cert_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "certs")
     cert_file = os.path.join(cert_dir, "cert.pem")
     key_file = os.path.join(cert_dir, "key.pem")
-    
+
     if not os.path.exists(cert_file) or not os.path.exists(key_file):
         print("SSL certificates not found!")
         print(f"Expected at: {cert_dir}")
-        print("Please generate them first.")
+        print("Generate: openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout key.pem -out cert.pem")
         exit(1)
-    
-    print(f"Starting HTTPS server with certificates from {cert_dir}")
-    print("Access from mobile: https://192.168.1.29:8443")
-    
+
+    lan_ip = get_lan_ip()
+    print(f"Starting HTTPS backend on https://{lan_ip}:8443")
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",

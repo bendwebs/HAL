@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="HAL - Local AI System",
     description="Multi-user local AI system with RAG, memory, and sub-agents",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -160,7 +160,37 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
+        "version": "2.0.0"
+    }
+
+
+@app.get("/api/network-info")
+async def network_info():
+    """Return LAN access URLs for connecting other devices"""
+    import socket
+
+    lan_ip = None
+    try:
+        # Connect to external address to determine LAN IP (no data actually sent)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        lan_ip = "unknown"
+
+    return {
+        "lan_ip": lan_ip,
+        "urls": {
+            "frontend_http": f"http://{lan_ip}:3000",
+            "frontend_https": f"https://{lan_ip}:3443",
+            "backend_http": f"http://{lan_ip}:8000",
+            "backend_https": f"https://{lan_ip}:8443",
+        },
+        "notes": {
+            "desktop": f"Any device on your network can access HAL at http://{lan_ip}:3000",
+            "mobile_voice": f"For voice features on mobile, use https://{lan_ip}:3443 (requires accepting self-signed cert)",
+        }
     }
 
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth';
-import { admin } from '@/lib/api';
+import { admin, API_URL } from '@/lib/api';
 import { 
   ArrowLeft, 
   Wrench, 
@@ -127,7 +127,7 @@ export default function AdminToolsPage() {
     try {
       setIsMcpLoading(true);
       // This will call a new API endpoint
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/admin/mcp-servers`, {
+      const response = await fetch(`${API_URL}/api/admin/mcp-servers`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('hal-auth') ? JSON.parse(localStorage.getItem('hal-auth')!).state?.token : ''}`,
         },
@@ -150,7 +150,7 @@ export default function AdminToolsPage() {
     }
     
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/admin/mcp-servers`, {
+      const response = await fetch(`${API_URL}/api/admin/mcp-servers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -182,7 +182,7 @@ export default function AdminToolsPage() {
   const testMcpConnection = async (serverId: string) => {
     setTestingMcp(serverId);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/admin/mcp-servers/${serverId}/test`, {
+      const response = await fetch(`${API_URL}/api/admin/mcp-servers/${serverId}/test`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('hal-auth') ? JSON.parse(localStorage.getItem('hal-auth')!).state?.token : ''}`,
@@ -205,7 +205,7 @@ export default function AdminToolsPage() {
 
   const toggleMcpServer = async (serverId: string, enabled: boolean) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/admin/mcp-servers/${serverId}`, {
+      const response = await fetch(`${API_URL}/api/admin/mcp-servers/${serverId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -227,7 +227,7 @@ export default function AdminToolsPage() {
     if (!confirm('Delete this MCP server? Its tools will no longer be available.')) return;
     
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/admin/mcp-servers/${serverId}`, {
+      const response = await fetch(`${API_URL}/api/admin/mcp-servers/${serverId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('hal-auth') ? JSON.parse(localStorage.getItem('hal-auth')!).state?.token : ''}`,

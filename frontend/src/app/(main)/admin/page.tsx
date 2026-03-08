@@ -18,7 +18,12 @@ import {
   Mic,
   Code,
   Settings,
-  UserPlus
+  UserPlus,
+  Wifi,
+  Copy,
+  Check,
+  Smartphone,
+  Globe
 } from 'lucide-react';
 
 interface GpuInfo {
@@ -45,6 +50,8 @@ export default function AdminPage() {
   const [resources, setResources] = useState<SystemResources | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [systemConfig, setSystemConfig] = useState<Record<string, any>>({});
+  const [networkInfo, setNetworkInfo] = useState<any>(null);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -66,14 +73,16 @@ export default function AdminPage() {
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const [resourcesData, usersData, configData] = await Promise.all([
+      const [resourcesData, usersData, configData, netInfo] = await Promise.all([
         admin.resources().catch(() => null),
         admin.users.list().catch(() => []),
         admin.config.get().catch(() => ({})),
+        admin.networkInfo().catch(() => null),
       ]);
       setResources(resourcesData);
       setUsers(usersData);
       setSystemConfig(configData);
+      setNetworkInfo(netInfo);
     } catch (err) {
       console.error('Failed to load admin data:', err);
     } finally {
@@ -406,6 +415,73 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
+
+            {/* Network / LAN Access */}
+            {networkInfo && (
+              <div className="bg-surface border border-border rounded-xl p-6 mb-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <Wifi className="w-5 h-5 text-accent" />
+                  <h2 className="text-lg font-semibold text-text-primary">Network Access</h2>
+                  <span className="text-xs text-text-muted bg-bg-tertiary px-2 py-0.5 rounded-full">
+                    LAN IP: {networkInfo.lan_ip}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Desktop Access */}
+                  <div className="p-4 bg-bg-tertiary rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Globe className="w-4 h-4 text-text-secondary" />
+                      <p className="text-sm font-medium text-text-primary">Desktop / Laptop</p>
+                    </div>
+                    <p className="text-xs text-text-muted mb-2">Any device on your Wi-Fi</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-sm text-accent bg-bg-primary px-3 py-1.5 rounded font-mono">
+                        {networkInfo.urls.frontend_http}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(networkInfo.urls.frontend_http);
+                          setCopiedUrl('desktop');
+                          setTimeout(() => setCopiedUrl(null), 2000);
+                        }}
+                        className="p-1.5 rounded hover:bg-surface transition-colors text-text-muted hover:text-text-secondary"
+                      >
+                        {copiedUrl === 'desktop' ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Mobile Access */}
+                  <div className="p-4 bg-bg-tertiary rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Smartphone className="w-4 h-4 text-text-secondary" />
+                      <p className="text-sm font-medium text-text-primary">Mobile (Voice)</p>
+                    </div>
+                    <p className="text-xs text-text-muted mb-2">HTTPS required for microphone access</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-sm text-accent bg-bg-primary px-3 py-1.5 rounded font-mono">
+                        {networkInfo.urls.frontend_https}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(networkInfo.urls.frontend_https);
+                          setCopiedUrl('mobile');
+                          setTimeout(() => setCopiedUrl(null), 2000);
+                        }}
+                        className="p-1.5 rounded hover:bg-surface transition-colors text-text-muted hover:text-text-secondary"
+                      >
+                        {copiedUrl === 'mobile' ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-xs text-text-muted mt-3">
+                  Share these URLs with anyone on your network. Mobile voice requires accepting the self-signed certificate.
+                </p>
+              </div>
+            )}
 
             {/* Quick Actions */}
             <div className="bg-surface border border-border rounded-xl p-6">
