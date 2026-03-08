@@ -347,6 +347,16 @@ async def send_message(
                 asyncio.create_task(extract_and_save_memories())
                 
             except Exception as e:
+                # Capture streaming errors for debugging
+                from app.services.error_capture import get_error_capture
+                import asyncio
+                asyncio.create_task(get_error_capture().capture(
+                    error=e,
+                    context="chat_streaming",
+                    user_id=current_user["_id"],
+                    chat_id=chat_id,
+                    extra={"model": chat.get("model_override"), "tools": allowed_tools},
+                ))
                 yield f"data: {json.dumps({'type': 'error', 'data': {'message': str(e)}})}\n\n"
         
         return StreamingResponse(

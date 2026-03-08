@@ -104,6 +104,14 @@ class Database:
             IndexModel([("created_at", ASCENDING)]),
         ])
         
+        # Error logs collection
+        await self.db.error_logs.create_indexes([
+            IndexModel([("created_at", ASCENDING)]),
+            IndexModel([("error_type", ASCENDING)]),
+            IndexModel([("context", ASCENDING)]),
+            IndexModel([("resolved", ASCENDING)]),
+        ])
+
         # System config collection
         await self.db.system_config.create_indexes([
             IndexModel([("key", ASCENDING)], unique=True),
@@ -184,6 +192,10 @@ class Database:
     @property
     def alerts(self):
         return self.db.alerts
+
+    @property
+    def error_logs(self):
+        return self.db.error_logs
     
     @property
     def system_config(self):

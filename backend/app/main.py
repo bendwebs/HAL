@@ -154,6 +154,41 @@ app.include_router(mcp_servers_router, prefix="/api")
 from app.routers.context import router as context_router
 app.include_router(context_router, prefix="/api")
 
+from app.routers.error_logs import router as error_logs_router
+app.include_router(error_logs_router, prefix="/api")
+
+
+# Error capture middleware - catches unhandled exceptions
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+
+class ErrorCaptureMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        try:
+            response = await call_next(request)
+            return response
+        except Exception as e:
+            from app.services.error_capture import get_error_capture
+            capture = get_error_capture()
+
+            await capture.capture(
+                error=e,
+                context="unhandled_request",
+                request_path=str(request.url.path),
+                request_method=request.method,
+            )
+
+            logger.error(f"Unhandled error on {request.method} {request.url.path}: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"},
+            )
+
+
+app.add_middleware(ErrorCaptureMiddleware)
+
 
 @app.get("/health")
 async def health_check():
