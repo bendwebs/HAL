@@ -15,16 +15,10 @@ const hostname = '0.0.0.0';
 const httpsPort = 3443;
 const httpPort = 3000;
 
-// Backend URL for API proxying
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
-const backendParsed = new URL(BACKEND_URL);
-const backendIsHttps = backendParsed.protocol === 'https:';
-
-// Check for certificates
+// Check for certificates first (needed to determine backend URL)
 const certPath = path.join(__dirname, '..', 'certs');
 const keyFile = path.join(certPath, 'key.pem');
 const certFile = path.join(certPath, 'cert.pem');
-
 const hasCerts = fs.existsSync(keyFile) && fs.existsSync(certFile);
 
 let httpsOptions = null;
@@ -36,6 +30,13 @@ if (hasCerts) {
 } else {
   console.warn('[HAL] SSL certificates not found - HTTPS server will not start');
 }
+
+// Backend URL for API proxying
+// When started via start.py, BACKEND_URL is set automatically to match the mode
+// Standalone fallback: match protocol to cert availability
+const BACKEND_URL = process.env.BACKEND_URL || (hasCerts ? 'https://localhost:8443' : 'http://localhost:8000');
+const backendParsed = new URL(BACKEND_URL);
+const backendIsHttps = backendParsed.protocol === 'https:';
 
 /**
  * Auto-detect LAN IP address

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { chats as chatsApi, messages as messagesApi, memories as memoriesApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
@@ -71,7 +71,6 @@ export default function ChatPage() {
               // Handle both direct and wrapped result structures
               const ytData = result.type === 'youtube_results' ? result : result;
               if (ytData.videos && ytData.videos.length > 0) {
-                console.log('[YouTube] Restored results from message history:', ytData.videos.length);
                 setLastYouTubeResults(ytData.videos);
                 return;
               }
@@ -91,14 +90,6 @@ export default function ChatPage() {
       ]);
       setChat(chatData);
       setMessages(messagesData);
-      
-      // Debug: log messages with actions
-      console.log('[loadChat] Messages loaded:', messagesData.length);
-      messagesData.forEach((msg: any, i: number) => {
-        if (msg.actions && msg.actions.length > 0) {
-          console.log(`[loadChat] Message ${i} has ${msg.actions.length} actions:`, msg.actions);
-        }
-      });
     } catch (err) {
       console.error('Failed to load chat:', err);
       router.push('/chat');
@@ -166,9 +157,9 @@ export default function ChatPage() {
   };
 
   // Handle video selection from YouTubeResults component
-  const handleVideoSelect = (video: YouTubeVideo) => {
+  const handleVideoSelect = useCallback((video: YouTubeVideo) => {
     handlePlayVideo(video);
-  };
+  }, [lastYouTubeResults]);
 
   const handleSendMessage = async (content: string, documentIds: string[] = []) => {
     if (!content.trim() || isSending) return;
@@ -176,8 +167,6 @@ export default function ChatPage() {
     // Check if this is a play command
     const playIndex = parsePlayCommand(content);
     if (playIndex !== null) {
-      console.log('[YouTube] Play command detected:', playIndex, 'Available results:', lastYouTubeResults.length);
-      
       if (lastYouTubeResults.length > 0) {
         const videoIndex = playIndex - 1; // Convert 1-based to 0-based
         if (videoIndex >= 0 && videoIndex < lastYouTubeResults.length) {
@@ -313,8 +302,6 @@ export default function ChatPage() {
         break;
       
       case 'action_start':
-        // Tool is starting - show it as running
-        console.log('[Stream] action_start received:', chunk.data.name, chunk.data);
         streamingMessageRef.current = { 
           ...current, 
           actions: [...(current.actions || []), chunk.data as MessageAction] 
@@ -325,17 +312,12 @@ export default function ChatPage() {
       case 'action_complete':
         // Track YouTube search results for play commands
         const actionData = chunk.data;
-        console.log('[Stream] action_complete received:', actionData.name, actionData);
-        
+
         if (actionData.name === 'youtube_search' && actionData.result) {
-          // Handle both direct result and wrapped result structures
           const result = actionData.result;
-          console.log('[Stream] YouTube result:', result);
-          const ytData = result.type === 'youtube_results' ? result : 
+          const ytData = result.type === 'youtube_results' ? result :
                         (result.result?.type === 'youtube_results' ? result.result : result);
-          
           if (ytData.videos && ytData.videos.length > 0) {
-            console.log('[YouTube] Setting lastYouTubeResults:', ytData.videos.length, 'videos');
             setLastYouTubeResults(ytData.videos);
           }
         }
@@ -356,7 +338,6 @@ export default function ChatPage() {
             actions: [...existingActions, chunk.data as MessageAction] 
           };
         }
-        console.log('[Stream] Updated actions:', streamingMessageRef.current.actions);
         setStreamingMessage(streamingMessageRef.current);
         break;
         
@@ -370,13 +351,10 @@ export default function ChatPage() {
         break;
         
       case 'saved':
-        // Message has been saved - move from streaming to messages list
-        console.log('[Stream] saved - streamingMessageRef actions:', streamingMessageRef.current?.actions);
         const finalMessage: Message = {
           ...streamingMessageRef.current,
           id: chunk.data.message_id,
         } as Message;
-        console.log('[Stream] saved - finalMessage actions:', finalMessage.actions);
         streamingMessageRef.current = null;
         setStreamingMessage(null);
         setMessages(msgs => [...msgs, finalMessage]);

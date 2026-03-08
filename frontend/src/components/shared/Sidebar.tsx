@@ -22,9 +22,10 @@ import {
   MoreVertical,
   Trash2,
   AlertTriangle,
-  Youtube
+  Youtube,
+  Search
 } from 'lucide-react';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { ChatListItem } from '@/types';
 import toast from 'react-hot-toast';
 
@@ -48,6 +49,7 @@ export default function Sidebar() {
   const chatListVersion = useUIStore((state) => state.chatListVersion);
   const [chatList, setChatList] = useState<ChatListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<{ chatId: string; x: number; y: number } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ chatId: string; title: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -149,9 +151,17 @@ export default function Sidebar() {
     setDeleteConfirm(null);
   };
 
-  // Separate pinned and unpinned chats
-  const pinnedChats = chatList.filter(c => c.is_pinned);
-  const recentChats = chatList.filter(c => !c.is_pinned);
+  // Filter and separate chats
+  const { pinnedChats, recentChats } = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    const filtered = query
+      ? chatList.filter(c => c.title.toLowerCase().includes(query))
+      : chatList;
+    return {
+      pinnedChats: filtered.filter(c => c.is_pinned),
+      recentChats: filtered.filter(c => !c.is_pinned),
+    };
+  }, [chatList, searchQuery]);
 
   return (
     <aside className="w-64 h-full bg-black/60 backdrop-blur-sm border-r border-white/10 flex flex-col">
@@ -178,6 +188,28 @@ export default function Sidebar() {
           <Plus className="w-4 h-4" />
           New Chat
         </button>
+      </div>
+
+      {/* Search */}
+      <div className="px-3 pb-2">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
+          <input
+            type="text"
+            placeholder="Search chats..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-8 pr-3 py-1.5 text-sm bg-surface border border-white/5 rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-text-primary"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Chat List */}
